@@ -221,12 +221,12 @@ type endpoints struct {
 }
 
 func NewServer(config *Config) (*Server, error) {
-	return NewServerLogger(config, nil)
+	return NewServerLogger(config, nil, new(token.Store))
 }
 
 // NewServer is used to construct a new Consul server from the
 // configuration, potentially returning an error
-func NewServerLogger(config *Config, logger *log.Logger) (*Server, error) {
+func NewServerLogger(config *Config, logger *log.Logger, tokens *token.Store) (*Server, error) {
 	// Check the protocol version.
 	if err := config.CheckProtocolVersion(); err != nil {
 		return nil, err
@@ -291,7 +291,7 @@ func NewServerLogger(config *Config, logger *log.Logger) (*Server, error) {
 		autopilotRemoveDeadCh: make(chan struct{}),
 		autopilotShutdownCh:   make(chan struct{}),
 		config:                config,
-		tokens:                config.Tokens,
+		tokens:                tokens,
 		connPool:              connPool,
 		eventChLAN:            make(chan serf.Event, 256),
 		eventChWAN:            make(chan serf.Event, 256),
@@ -320,13 +320,8 @@ func NewServerLogger(config *Config, logger *log.Logger) (*Server, error) {
 		return nil, fmt.Errorf("Failed to create authoritative ACL cache: %v", err)
 	}
 
-	// Set up the non-authoritative ACL cache. A nil local function is given
-	// if ACL replication isn't enabled.
-	var local acl.FaultFunc
-	if s.IsACLReplicationEnabled() {
-		local = s.aclLocalFault
-	}
-	if s.aclCache, err = newACLCache(config, logger, s.RPC, local); err != nil {
+	// Set up the non-authoritative ACL cache.
+	if s.aclCache, err = newACLCache(config, logger, s.RPC, s.aclLocalFault); err != nil {
 		s.Shutdown()
 		return nil, fmt.Errorf("Failed to create non-authoritative ACL cache: %v", err)
 	}
@@ -398,9 +393,7 @@ func NewServerLogger(config *Config, logger *log.Logger) (*Server, error) {
 	go s.monitorLeadership()
 
 	// Start ACL replication.
-	if s.IsACLReplicationEnabled() {
-		go s.runACLReplication()
-	}
+	go s.runACLReplication()
 
 	// Start listening for RPC requests.
 	go s.listen()

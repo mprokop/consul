@@ -318,7 +318,7 @@ func (a *Agent) Start() error {
 
 	// Setup either the client or the server.
 	if c.Server {
-		server, err := consul.NewServerLogger(consulCfg, a.logger)
+		server, err := consul.NewServerLogger(consulCfg, a.logger, a.tokens)
 		if err != nil {
 			return fmt.Errorf("Failed to start Consul server: %v", err)
 		}
@@ -623,10 +623,6 @@ func (a *Agent) consulConfig() (*consul.Config, error) {
 	if a.config.Performance.RaftMultiplier > 0 {
 		base.ScaleRaft(a.config.Performance.RaftMultiplier)
 	}
-
-	// Always use the agent's token store, which is what the API endpoints
-	// will update.
-	base.Tokens = a.tokens
 
 	// Override with our config
 	if a.config.Datacenter != "" {

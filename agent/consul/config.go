@@ -192,10 +192,6 @@ type Config struct {
 	// operators track which versions are actively deployed
 	Build string
 
-	// Tokens has any initially-configured ACL tokens and then can be
-	// updated at run time.
-	Tokens *token.Store
-
 	// ACLMasterToken is used to bootstrap the ACL system. It should be specified
 	// on the servers in the ACLDatacenter. When the leader comes online, it ensures
 	// that the Master token is available. This provides the initial token.
@@ -356,7 +352,6 @@ func DefaultConfig() *Config {
 		SerfFloodInterval:        60 * time.Second,
 		ReconcileInterval:        60 * time.Second,
 		ProtocolVersion:          ProtocolVersion2Compatible,
-		Tokens:                   new(token.Store),
 		ACLTTL:                   30 * time.Second,
 		ACLDefaultPolicy:         "allow",
 		ACLDownPolicy:            "extend-cache",
