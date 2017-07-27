@@ -282,6 +282,7 @@ func New(c *Config) (*Agent, error) {
 	a.tokens.UpdateUserToken(a.config.ACLToken)
 	a.tokens.UpdateAgentToken(a.config.ACLAgentToken)
 	a.tokens.UpdateAgentMasterToken(a.config.ACLAgentMasterToken)
+	a.tokens.UpdateACLReplicationToken(a.config.ACLReplicationToken)
 
 	return a, nil
 }
@@ -623,6 +624,10 @@ func (a *Agent) consulConfig() (*consul.Config, error) {
 		base.ScaleRaft(a.config.Performance.RaftMultiplier)
 	}
 
+	// Always use the agent's token store, which is what the API endpoints
+	// will update.
+	base.Tokens = a.tokens
+
 	// Override with our config
 	if a.config.Datacenter != "" {
 		base.Datacenter = a.config.Datacenter
@@ -711,12 +716,6 @@ func (a *Agent) consulConfig() (*consul.Config, error) {
 	if a.config.RaftProtocol != 0 {
 		base.RaftConfig.ProtocolVersion = raft.ProtocolVersion(a.config.RaftProtocol)
 	}
-	if a.config.ACLToken != "" {
-		base.ACLToken = a.config.ACLToken
-	}
-	if a.config.ACLAgentToken != "" {
-		base.ACLAgentToken = a.config.ACLAgentToken
-	}
 	if a.config.ACLMasterToken != "" {
 		base.ACLMasterToken = a.config.ACLMasterToken
 	}
@@ -731,9 +730,6 @@ func (a *Agent) consulConfig() (*consul.Config, error) {
 	}
 	if a.config.ACLDownPolicy != "" {
 		base.ACLDownPolicy = a.config.ACLDownPolicy
-	}
-	if a.config.ACLReplicationToken != "" {
-		base.ACLReplicationToken = a.config.ACLReplicationToken
 	}
 	if a.config.ACLEnforceVersion8 != nil {
 		base.ACLEnforceVersion8 = *a.config.ACLEnforceVersion8

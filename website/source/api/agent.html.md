@@ -395,11 +395,14 @@ not persisted, so will need to be updated again if the agent is restarted.
 | `PUT`  | `/agent/token/acl_token`              | `application/json`         |
 | `PUT`  | `/agent/token/acl_agent_token`        | `application/json`         |
 | `PUT`  | `/agent/token/acl_agent_master_token` | `application/json`         |
+| `PUT`  | `/agent/token/acl_replication_token`  | `application/json`         |
 
-The paths above correspond to the token names as found in the agent configuration,
-[`acl_token`](/docs/agent/options.html#acl_token),
-[`acl_agent_token`](/docs/agent/options.html#acl_agent_token),
-and [`acl_agent_master_token`](/docs/agent/options.html#acl_agent_master_token).
+The paths above correspond to the token names as found in the agent configuration:
+
+1. [`acl_token`](/docs/agent/options.html#acl_token)
+2. [`acl_agent_token`](/docs/agent/options.html#acl_agent_token)
+3. [`acl_agent_master_token`](/docs/agent/options.html#acl_agent_master_token)
+4. [`acl_replication_token`](/docs/agent/options.html#acl_replication_token)
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),

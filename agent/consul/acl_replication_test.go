@@ -228,7 +228,7 @@ func TestACLReplication_updateLocalACLs_RateLimit(t *testing.T) {
 	dir1, s1 := testServerWithConfig(t, func(c *Config) {
 		c.Datacenter = "dc2"
 		c.ACLDatacenter = "dc1"
-		c.ACLReplicationToken = "secret"
+		c.Tokens.UpdateACLReplicationToken("secret")
 		c.ACLReplicationApplyLimit = 1
 	})
 	defer os.RemoveAll(dir1)
@@ -300,7 +300,7 @@ func TestACLReplication_IsACLReplicationEnabled(t *testing.T) {
 	dir3, s3 := testServerWithConfig(t, func(c *Config) {
 		c.Datacenter = "dc2"
 		c.ACLDatacenter = "dc1"
-		c.ACLReplicationToken = "secret"
+		c.Tokens.UpdateACLReplicationToken("secret")
 	})
 	defer os.RemoveAll(dir3)
 	defer s3.Shutdown()
@@ -313,7 +313,7 @@ func TestACLReplication_IsACLReplicationEnabled(t *testing.T) {
 	dir4, s4 := testServerWithConfig(t, func(c *Config) {
 		c.Datacenter = "dc1"
 		c.ACLDatacenter = "dc1"
-		c.ACLReplicationToken = "secret"
+		c.Tokens.UpdateACLReplicationToken("secret")
 	})
 	defer os.RemoveAll(dir4)
 	defer s4.Shutdown()
@@ -336,7 +336,7 @@ func TestACLReplication(t *testing.T) {
 	dir2, s2 := testServerWithConfig(t, func(c *Config) {
 		c.Datacenter = "dc2"
 		c.ACLDatacenter = "dc1"
-		c.ACLReplicationToken = "root"
+		c.Tokens.UpdateACLReplicationToken("root")
 		c.ACLReplicationInterval = 10 * time.Millisecond
 		c.ACLReplicationApplyLimit = 1000000
 	})

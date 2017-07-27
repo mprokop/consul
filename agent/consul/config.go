@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/agent/token"
 	"github.com/hashicorp/consul/tlsutil"
 	"github.com/hashicorp/consul/types"
 	"github.com/hashicorp/memberlist"
@@ -191,15 +192,9 @@ type Config struct {
 	// operators track which versions are actively deployed
 	Build string
 
-	// ACLToken is the default token to use when making a request.
-	// If not provided, the anonymous token is used. This enables
-	// backwards compatibility as well.
-	ACLToken string
-
-	// ACLAgentToken is the default token used to make requests for the agent
-	// itself, such as for registering itself with the catalog. If not
-	// configured, the ACLToken will be used.
-	ACLAgentToken string
+	// Tokens has any initially-configured ACL tokens and then can be
+	// updated at run time.
+	Tokens *token.Store
 
 	// ACLMasterToken is used to bootstrap the ACL system. It should be specified
 	// on the servers in the ACLDatacenter. When the leader comes online, it ensures
@@ -227,12 +222,6 @@ type Config struct {
 	// cached policies. If a policy is not in the cache, it acts like deny.
 	// "allow" can be used to allow all requests. This is not recommended.
 	ACLDownPolicy string
-
-	// ACLReplicationToken is used to fetch ACLs from the ACLDatacenter in
-	// order to replicate them locally. Setting this to a non-empty value
-	// also enables replication. Replication is only available in datacenters
-	// other than the ACLDatacenter.
-	ACLReplicationToken string
 
 	// ACLReplicationInterval is the interval at which replication passes
 	// will occur. Queries to the ACLDatacenter may block, so replication
@@ -367,6 +356,7 @@ func DefaultConfig() *Config {
 		SerfFloodInterval:        60 * time.Second,
 		ReconcileInterval:        60 * time.Second,
 		ProtocolVersion:          ProtocolVersion2Compatible,
+		Tokens:                   new(token.Store),
 		ACLTTL:                   30 * time.Second,
 		ACLDefaultPolicy:         "allow",
 		ACLDownPolicy:            "extend-cache",

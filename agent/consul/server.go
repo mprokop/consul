@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/consul/agent/consul/state"
 	"github.com/hashicorp/consul/agent/consul/structs"
 	"github.com/hashicorp/consul/agent/pool"
+	"github.com/hashicorp/consul/agent/token"
 	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/tlsutil"
 	"github.com/hashicorp/consul/types"
@@ -98,6 +99,11 @@ type Server struct {
 
 	// Consul configuration
 	config *Config
+
+	// tokens holds ACL tokens initially from the configuration, but can
+	// be updated at runtime, so should always be used instead of going to
+	// the configuration directly.
+	tokens *token.Store
 
 	// Connection pool to other consul servers
 	connPool *pool.ConnPool
@@ -285,6 +291,7 @@ func NewServerLogger(config *Config, logger *log.Logger) (*Server, error) {
 		autopilotRemoveDeadCh: make(chan struct{}),
 		autopilotShutdownCh:   make(chan struct{}),
 		config:                config,
+		tokens:                config.Tokens,
 		connPool:              connPool,
 		eventChLAN:            make(chan serf.Event, 256),
 		eventChWAN:            make(chan serf.Event, 256),

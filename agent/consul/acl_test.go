@@ -598,7 +598,7 @@ func TestACL_Replication(t *testing.T) {
 		c.ACLDatacenter = "dc1"
 		c.ACLDefaultPolicy = "deny"
 		c.ACLDownPolicy = "extend-cache"
-		c.ACLReplicationToken = "root"
+		c.Tokens.UpdateACLReplicationToken("root")
 		c.ACLReplicationInterval = 10 * time.Millisecond
 		c.ACLReplicationApplyLimit = 1000000
 	})
@@ -609,7 +609,7 @@ func TestACL_Replication(t *testing.T) {
 		c.Datacenter = "dc3"
 		c.ACLDatacenter = "dc1"
 		c.ACLDownPolicy = "deny"
-		c.ACLReplicationToken = "root"
+		c.Tokens.UpdateACLReplicationToken("root")
 		c.ACLReplicationInterval = 10 * time.Millisecond
 		c.ACLReplicationApplyLimit = 1000000
 	})
