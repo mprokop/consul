@@ -564,7 +564,7 @@ type Config struct {
 	StartJoinWan []string `mapstructure:"start_join_wan"`
 
 	// RetryJoin is a list of addresses to join with retry enabled.
-	RetryJoin []string `mapstructure:"retry_join"`
+	RetryJoin []string `mapstructure:"retry_join" json:"-"`
 
 	// RetryMaxAttempts specifies the maximum number of times to retry joining a
 	// host on startup. This is useful for cases where we know the node will be
@@ -1193,6 +1193,10 @@ func DecodeConfig(r io.Reader) (*Config, error) {
 		result.RetryJoin = append(result.RetryJoin, m.String())
 		result.DeprecatedRetryJoinEC2 = RetryJoinEC2{}
 
+		// redact m before output
+		m["access_key_id"] = "xxx"
+		m["secret_access_key"] = "xxx"
+
 		fmt.Fprintf(os.Stderr, "==> DEPRECATION: retry_join_ec2 is deprecated."+
 			"Please add %q to retry_join\n", m)
 	}
@@ -1209,6 +1213,12 @@ func DecodeConfig(r io.Reader) (*Config, error) {
 		result.RetryJoin = append(result.RetryJoin, m.String())
 		result.DeprecatedRetryJoinAzure = RetryJoinAzure{}
 
+		// redact m before output
+		m["subscription_id"] = "xxx"
+		m["tenant_id"] = "xxx"
+		m["client_id"] = "xxx"
+		m["secret_access_key"] = "xxx"
+
 		fmt.Fprintf(os.Stderr, "==> DEPRECATION: retry_join_azure is deprecated."+
 			"Please add %q to retry_join\n", m)
 	}
@@ -1222,6 +1232,9 @@ func DecodeConfig(r io.Reader) (*Config, error) {
 		}
 		result.RetryJoin = append(result.RetryJoin, m.String())
 		result.DeprecatedRetryJoinGCE = RetryJoinGCE{}
+
+		// redact m before output
+		m["credentials_file"] = "xxx"
 
 		fmt.Fprintf(os.Stderr, "==> DEPRECATION: retry_join_gce is deprecated."+
 			"Please add %q to retry_join\n", m)

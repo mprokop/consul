@@ -430,20 +430,6 @@ func (cmd *AgentCommand) readConfig() *agent.Config {
 		cmd.UI.Error("WARNING: Bootstrap mode enabled! Do not enable unless necessary")
 	}
 
-	// Need both tag key and value for EC2 discovery
-	if cfg.DeprecatedRetryJoinEC2.TagKey != "" || cfg.DeprecatedRetryJoinEC2.TagValue != "" {
-		if cfg.DeprecatedRetryJoinEC2.TagKey == "" || cfg.DeprecatedRetryJoinEC2.TagValue == "" {
-			cmd.UI.Error("tag key and value are both required for EC2 retry-join")
-			return nil
-		}
-	}
-
-	// EC2 and GCE discovery are mutually exclusive
-	if cfg.DeprecatedRetryJoinEC2.TagKey != "" && cfg.DeprecatedRetryJoinEC2.TagValue != "" && cfg.DeprecatedRetryJoinGCE.TagValue != "" {
-		cmd.UI.Error("EC2 and GCE discovery are mutually exclusive. Please provide one or the other.")
-		return nil
-	}
-
 	// Verify the node metadata entries are valid
 	if err := structs.ValidateMetadata(cfg.Meta); err != nil {
 		cmd.UI.Error(fmt.Sprintf("Failed to parse node metadata: %v", err))

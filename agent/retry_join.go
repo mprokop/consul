@@ -16,39 +16,38 @@ func (a *Agent) retryJoin() {
 		return
 	}
 
-	// split retry join addresses from go-discover statements
-	var addrs []string
-	var disco string
-	for _, addr := range cfg.RetryJoin {
-		if strings.Contains(addr, "provider=") {
-			disco = addr
-			continue
-		}
-		addrs = append(addrs, addr)
-	}
-
 	a.logger.Printf("[INFO] agent: Joining cluster...")
 	attempt := 0
 	for {
-		var servers []string
+		var addrs []string
 		var err error
-		if disco != "" {
-			servers, err = discover.Addrs(disco, a.logger)
-			if err != nil {
-				a.logger.Printf("[ERR] agent: %s", err)
+
+		for _, addr := range cfg.RetryJoin {
+			switch {
+			case strings.Contains(addr, "provider="):
+				servers, err := discover.Addrs(addr, a.logger)
+				if err != nil {
+					a.logger.Printf("[ERR] agent: %s", err)
+				} else {
+					addrs = append(addrs, servers...)
+					a.logger.Printf("[INFO] agent: Discovered servers: %s", strings.Join(servers, " "))
+				}
+
+			default:
+				addrs = append(addrs, addr)
 			}
-			a.logger.Printf("[ERR] agent: Discovered servers: %v", servers)
 		}
 
-		servers = append(servers, addrs...)
-		if len(servers) == 0 {
-			err = fmt.Errorf("No servers to join")
-		} else {
-			n, err := a.JoinLAN(servers)
+		if len(addrs) > 0 {
+			n, err := a.JoinLAN(addrs)
 			if err == nil {
 				a.logger.Printf("[INFO] agent: Join completed. Synced with %d initial agents", n)
 				return
 			}
+		}
+
+		if len(addrs) == 0 {
+			err = fmt.Errorf("No servers to join")
 		}
 
 		attempt++
