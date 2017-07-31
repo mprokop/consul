@@ -1194,8 +1194,8 @@ func DecodeConfig(r io.Reader) (*Config, error) {
 		result.DeprecatedRetryJoinEC2 = RetryJoinEC2{}
 
 		// redact m before output
-		m["access_key_id"] = "xxx"
-		m["secret_access_key"] = "xxx"
+		m["access_key_id"] = "<hidden>"
+		m["secret_access_key"] = "<hidden>"
 
 		fmt.Fprintf(os.Stderr, "==> DEPRECATION: retry_join_ec2 is deprecated."+
 			"Please add %q to retry_join\n", m)
@@ -1214,10 +1214,10 @@ func DecodeConfig(r io.Reader) (*Config, error) {
 		result.DeprecatedRetryJoinAzure = RetryJoinAzure{}
 
 		// redact m before output
-		m["subscription_id"] = "xxx"
-		m["tenant_id"] = "xxx"
-		m["client_id"] = "xxx"
-		m["secret_access_key"] = "xxx"
+		m["subscription_id"] = "<hidden>"
+		m["tenant_id"] = "<hidden>"
+		m["client_id"] = "<hidden>"
+		m["secret_access_key"] = "<hidden>"
 
 		fmt.Fprintf(os.Stderr, "==> DEPRECATION: retry_join_azure is deprecated."+
 			"Please add %q to retry_join\n", m)
@@ -1234,7 +1234,7 @@ func DecodeConfig(r io.Reader) (*Config, error) {
 		result.DeprecatedRetryJoinGCE = RetryJoinGCE{}
 
 		// redact m before output
-		m["credentials_file"] = "xxx"
+		m["credentials_file"] = "<hidden>"
 
 		fmt.Fprintf(os.Stderr, "==> DEPRECATION: retry_join_gce is deprecated."+
 			"Please add %q to retry_join\n", m)
