@@ -8,37 +8,115 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/hashicorp/go-discover/provider/aliyun"
+	"github.com/hashicorp/go-discover/provider/aws"
+	"github.com/hashicorp/go-discover/provider/azure"
+	"github.com/hashicorp/go-discover/provider/digitalocean"
+	"github.com/hashicorp/go-discover/provider/gce"
+	"github.com/hashicorp/go-discover/provider/os"
+	"github.com/hashicorp/go-discover/provider/packet"
+	"github.com/hashicorp/go-discover/provider/scaleway"
+	"github.com/hashicorp/go-discover/provider/softlayer"
+	"github.com/hashicorp/go-discover/provider/triton"
+	"github.com/hashicorp/go-discover/provider/vsphere"
 )
 
+// Provider has lookup functions for meta data in a
+// cloud environment.
 type Provider interface {
+	// Addrs looks up addresses in the cloud environment according to the
+	// configuration provided in args.
 	Addrs(args map[string]string, l *log.Logger) ([]string, error)
+
+	// Help provides the configuration help for the command line client.
+	Help() string
 }
 
-var (
-	mu        sync.Mutex
-	providers = map[string]Provider{}
-	helps     = map[string]string{}
-)
-
-// Register adds a new provider for the given name. If the
-// provider is nil or already registered the function panics.
-func Register(name string, provider Provider, help string) {
-	mu.Lock()
-	defer mu.Unlock()
-	if provider == nil {
-		panic("discover: Register called with nil provider")
-	}
-	if _, dup := providers[name]; dup {
-		panic("discover: Register called twice for provider " + name)
-	}
-	providers[name] = provider
-	helps[name] = help
+// ProviderWithUserAgent is a provider that declares it's user agent. Not all
+// providers support this.
+type ProviderWithUserAgent interface {
+	// SetUserAgent sets the user agent on the provider to the provided string.
+	SetUserAgent(s string)
 }
 
-// ProviderNames returns the names of the registered providers.
-func ProviderNames() []string {
+// Providers contains all available providers.
+var Providers = map[string]Provider{
+	"aliyun":       &aliyun.Provider{},
+	"aws":          &aws.Provider{},
+	"azure":        &azure.Provider{},
+	"digitalocean": &digitalocean.Provider{},
+	"gce":          &gce.Provider{},
+	"os":           &os.Provider{},
+	"scaleway":     &scaleway.Provider{},
+	"softlayer":    &softlayer.Provider{},
+	"triton":       &triton.Provider{},
+	"vsphere":      &vsphere.Provider{},
+	"packet":       &packet.Provider{},
+}
+
+// Discover looks up metadata in different cloud environments.
+type Discover struct {
+	// Providers is the list of address lookup providers.
+	// If nil, the default list of providers is used.
+	Providers map[string]Provider
+
+	// userAgent is the string to use for requests, when supported.
+	userAgent string
+
+	// once is used to initialize the actual list of providers.
+	once sync.Once
+}
+
+// Option is used as an initialization option/
+type Option func(*Discover) error
+
+// New creates a new discover client with the given options.
+func New(opts ...Option) (*Discover, error) {
+	d := new(Discover)
+
+	for _, opt := range opts {
+		if err := opt(d); err != nil {
+			return nil, err
+		}
+	}
+
+	d.once.Do(d.initProviders)
+
+	return d, nil
+}
+
+// WithUserAgent allows specifying a custom user agent option to send with
+// requests when the underlying client library supports it.
+func WithUserAgent(agent string) Option {
+	return func(d *Discover) error {
+		d.userAgent = agent
+		return nil
+	}
+}
+
+// WithProviders allows specifying your own set of providers.
+func WithProviders(m map[string]Provider) Option {
+	return func(d *Discover) error {
+		d.Providers = m
+		return nil
+	}
+}
+
+// initProviders sets the list of providers to the
+// default list of providers if none are configured.
+func (d *Discover) initProviders() {
+	if d.Providers == nil {
+		d.Providers = Providers
+	}
+}
+
+// Names returns the names of the configured providers.
+func (d *Discover) Names() []string {
+	d.once.Do(d.initProviders)
+
 	var names []string
-	for n := range helps {
+	for n := range d.Providers {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -56,12 +134,12 @@ var globalHelp = `The options for discovering ip addresses are provided as a
 
 // Help describes the format of the configuration string for address discovery
 // and the various provider specific options.
-func Help() string {
-	mu.Lock()
-	defer mu.Unlock()
+func (d *Discover) Help() string {
+	d.once.Do(d.initProviders)
+
 	h := []string{globalHelp}
-	for _, name := range ProviderNames() {
-		h = append(h, helps[name])
+	for _, name := range d.Names() {
+		h = append(h, d.Providers[name].Help())
 	}
 	return strings.Join(h, "\n")
 }
@@ -69,7 +147,9 @@ func Help() string {
 // Addrs discovers ip addresses of nodes that match the given filter criteria.
 // The config string must have the format 'provider=xxx key=val key=val ...'
 // where the keys and values are provider specific. The values are URL encoded.
-func Addrs(cfg string, l *log.Logger) ([]string, error) {
+func (d *Discover) Addrs(cfg string, l *log.Logger) ([]string, error) {
+	d.once.Do(d.initProviders)
+
 	args, err := Parse(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("discover: %s", err)
@@ -80,12 +160,21 @@ func Addrs(cfg string, l *log.Logger) ([]string, error) {
 		return nil, fmt.Errorf("discover: no provider")
 	}
 
-	mu.Lock()
-	p := providers[name]
-	mu.Unlock()
+	providers := d.Providers
+	if providers == nil {
+		providers = Providers
+	}
 
+	p := providers[name]
 	if p == nil {
 		return nil, fmt.Errorf("discover: unknown provider " + name)
 	}
+	l.Printf("[DEBUG] discover: Using provider %q", name)
+
+	if typ, ok := p.(ProviderWithUserAgent); ok {
+		typ.SetUserAgent(d.userAgent)
+		return p.Addrs(args, l)
+	}
+
 	return p.Addrs(args, l)
 }

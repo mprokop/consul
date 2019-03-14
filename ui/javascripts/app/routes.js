@@ -90,7 +90,7 @@ App.DcRoute = App.BaseRoute.extend({
   model: function(params) {
     var token = App.get('settings.token');
 
-    // Return a promise hash to retreieve the
+    // Return a promise hash to retrieve the
     // dcs and nodes used in the header
     return Ember.RSVP.hash({
       dc: params.dc,
@@ -292,10 +292,11 @@ App.NodesShowRoute = App.BaseRoute.extend({
     var distances = [];
     dc.coordinates.forEach(function (node) {
       if (params.name == node.Node) {
+        var segment = node.Segment;
         dc.coordinates.forEach(function (other) {
-          if (node.Node != other.Node) {
+          if (node.Node != other.Node && other.Segment == segment) {
             var dist = distance(node, other);
-            distances.push({ node: other.Node, distance: dist });
+            distances.push({ node: other.Node, distance: dist, segment: segment });
             sum += dist;
             if (dist < min) {
               min = dist;

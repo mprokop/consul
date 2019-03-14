@@ -5,11 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/testrpc"
 	"github.com/hashicorp/net-rpc-msgpackrpc"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHealth_ChecksInState(t *testing.T) {
@@ -171,8 +173,8 @@ func TestHealth_ChecksInState_DistanceSort(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	updates := structs.Coordinates{
-		{"foo", lib.GenerateCoordinate(1 * time.Millisecond)},
-		{"bar", lib.GenerateCoordinate(2 * time.Millisecond)},
+		{Node: "foo", Coord: lib.GenerateCoordinate(1 * time.Millisecond)},
+		{Node: "bar", Coord: lib.GenerateCoordinate(2 * time.Millisecond)},
 	}
 	if err := s1.fsm.State().CoordinateBatchUpdate(3, updates); err != nil {
 		t.Fatalf("err: %v", err)
@@ -444,8 +446,8 @@ func TestHealth_ServiceChecks_DistanceSort(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	updates := structs.Coordinates{
-		{"foo", lib.GenerateCoordinate(1 * time.Millisecond)},
-		{"bar", lib.GenerateCoordinate(2 * time.Millisecond)},
+		{Node: "foo", Coord: lib.GenerateCoordinate(1 * time.Millisecond)},
+		{Node: "bar", Coord: lib.GenerateCoordinate(2 * time.Millisecond)},
 	}
 	if err := s1.fsm.State().CoordinateBatchUpdate(3, updates); err != nil {
 		t.Fatalf("err: %v", err)
@@ -570,7 +572,7 @@ func TestHealth_ServiceNodes(t *testing.T) {
 	req := structs.ServiceSpecificRequest{
 		Datacenter:  "dc1",
 		ServiceName: "db",
-		ServiceTag:  "master",
+		ServiceTags: []string{"master"},
 		TagFilter:   false,
 	}
 	if err := msgpackrpc.CallWithCodec(codec, "Health.ServiceNodes", &req, &out2); err != nil {
@@ -599,6 +601,107 @@ func TestHealth_ServiceNodes(t *testing.T) {
 	if nodes[1].Checks[0].Status != api.HealthPassing {
 		t.Fatalf("Bad: %v", nodes[1])
 	}
+
+	// Same should still work for <1.3 RPCs with singular tags
+	// DEPRECATED (singular-service-tag) - remove this when backwards RPC compat
+	// with 1.2.x is not required.
+	{
+		var out2 structs.IndexedCheckServiceNodes
+		req := structs.ServiceSpecificRequest{
+			Datacenter:  "dc1",
+			ServiceName: "db",
+			ServiceTag:  "master",
+			TagFilter:   false,
+		}
+		if err := msgpackrpc.CallWithCodec(codec, "Health.ServiceNodes", &req, &out2); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		nodes := out2.Nodes
+		if len(nodes) != 2 {
+			t.Fatalf("Bad: %v", nodes)
+		}
+		if nodes[0].Node.Node != "bar" {
+			t.Fatalf("Bad: %v", nodes[0])
+		}
+		if nodes[1].Node.Node != "foo" {
+			t.Fatalf("Bad: %v", nodes[1])
+		}
+		if !lib.StrContains(nodes[0].Service.Tags, "slave") {
+			t.Fatalf("Bad: %v", nodes[0])
+		}
+		if !lib.StrContains(nodes[1].Service.Tags, "master") {
+			t.Fatalf("Bad: %v", nodes[1])
+		}
+		if nodes[0].Checks[0].Status != api.HealthWarning {
+			t.Fatalf("Bad: %v", nodes[0])
+		}
+		if nodes[1].Checks[0].Status != api.HealthPassing {
+			t.Fatalf("Bad: %v", nodes[1])
+		}
+	}
+}
+
+func TestHealth_ServiceNodes_MultipleServiceTags(t *testing.T) {
+	t.Parallel()
+	dir1, s1 := testServer(t)
+	defer os.RemoveAll(dir1)
+	defer s1.Shutdown()
+	codec := rpcClient(t, s1)
+	defer codec.Close()
+
+	testrpc.WaitForLeader(t, s1.RPC, "dc1")
+
+	arg := structs.RegisterRequest{
+		Datacenter: "dc1",
+		Node:       "foo",
+		Address:    "127.0.0.1",
+		Service: &structs.NodeService{
+			ID:      "db",
+			Service: "db",
+			Tags:    []string{"master", "v2"},
+		},
+		Check: &structs.HealthCheck{
+			Name:      "db connect",
+			Status:    api.HealthPassing,
+			ServiceID: "db",
+		},
+	}
+	var out struct{}
+	require.NoError(t, msgpackrpc.CallWithCodec(codec, "Catalog.Register", &arg, &out))
+
+	arg = structs.RegisterRequest{
+		Datacenter: "dc1",
+		Node:       "bar",
+		Address:    "127.0.0.2",
+		Service: &structs.NodeService{
+			ID:      "db",
+			Service: "db",
+			Tags:    []string{"slave", "v2"},
+		},
+		Check: &structs.HealthCheck{
+			Name:      "db connect",
+			Status:    api.HealthWarning,
+			ServiceID: "db",
+		},
+	}
+	require.NoError(t, msgpackrpc.CallWithCodec(codec, "Catalog.Register", &arg, &out))
+
+	var out2 structs.IndexedCheckServiceNodes
+	req := structs.ServiceSpecificRequest{
+		Datacenter:  "dc1",
+		ServiceName: "db",
+		ServiceTags: []string{"master", "v2"},
+		TagFilter:   true,
+	}
+	require.NoError(t, msgpackrpc.CallWithCodec(codec, "Health.ServiceNodes", &req, &out2))
+
+	nodes := out2.Nodes
+	require.Len(t, nodes, 1)
+	require.Equal(t, nodes[0].Node.Node, "foo")
+	require.Contains(t, nodes[0].Service.Tags, "v2")
+	require.Contains(t, nodes[0].Service.Tags, "master")
+	require.Equal(t, nodes[0].Checks[0].Status, api.HealthPassing)
 }
 
 func TestHealth_ServiceNodes_NodeMetaFilter(t *testing.T) {
@@ -748,8 +851,8 @@ func TestHealth_ServiceNodes_DistanceSort(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	updates := structs.Coordinates{
-		{"foo", lib.GenerateCoordinate(1 * time.Millisecond)},
-		{"bar", lib.GenerateCoordinate(2 * time.Millisecond)},
+		{Node: "foo", Coord: lib.GenerateCoordinate(1 * time.Millisecond)},
+		{Node: "bar", Coord: lib.GenerateCoordinate(2 * time.Millisecond)},
 	}
 	if err := s1.fsm.State().CoordinateBatchUpdate(3, updates); err != nil {
 		t.Fatalf("err: %v", err)
@@ -819,6 +922,107 @@ func TestHealth_ServiceNodes_DistanceSort(t *testing.T) {
 	if nodes[1].Node.Node != "foo" {
 		t.Fatalf("Bad: %v", nodes[1])
 	}
+}
+
+func TestHealth_ServiceNodes_ConnectProxy_ACL(t *testing.T) {
+	t.Parallel()
+
+	assert := assert.New(t)
+	dir1, s1 := testServerWithConfig(t, func(c *Config) {
+		c.ACLDatacenter = "dc1"
+		c.ACLsEnabled = true
+		c.ACLMasterToken = "root"
+		c.ACLDefaultPolicy = "deny"
+		c.ACLEnforceVersion8 = false
+	})
+	defer os.RemoveAll(dir1)
+	defer s1.Shutdown()
+	codec := rpcClient(t, s1)
+	defer codec.Close()
+
+	testrpc.WaitForLeader(t, s1.RPC, "dc1")
+
+	// Create the ACL.
+	arg := structs.ACLRequest{
+		Datacenter: "dc1",
+		Op:         structs.ACLSet,
+		ACL: structs.ACL{
+			Name: "User token",
+			Type: structs.ACLTokenTypeClient,
+			Rules: `
+service "foo" {
+	policy = "write"
+}
+`,
+		},
+		WriteRequest: structs.WriteRequest{Token: "root"},
+	}
+	var token string
+	assert.Nil(msgpackrpc.CallWithCodec(codec, "ACL.Apply", arg, &token))
+
+	{
+		var out struct{}
+
+		// Register a service
+		args := structs.TestRegisterRequestProxy(t)
+		args.WriteRequest.Token = "root"
+		args.Service.ID = "foo-proxy-0"
+		args.Service.Service = "foo-proxy"
+		args.Service.Proxy.DestinationServiceName = "bar"
+		args.Check = &structs.HealthCheck{
+			Name:      "proxy",
+			Status:    api.HealthPassing,
+			ServiceID: args.Service.ID,
+		}
+		assert.Nil(msgpackrpc.CallWithCodec(codec, "Catalog.Register", &args, &out))
+
+		// Register a service
+		args = structs.TestRegisterRequestProxy(t)
+		args.WriteRequest.Token = "root"
+		args.Service.Service = "foo-proxy"
+		args.Service.Proxy.DestinationServiceName = "foo"
+		args.Check = &structs.HealthCheck{
+			Name:      "proxy",
+			Status:    api.HealthPassing,
+			ServiceID: args.Service.Service,
+		}
+		assert.Nil(msgpackrpc.CallWithCodec(codec, "Catalog.Register", &args, &out))
+
+		// Register a service
+		args = structs.TestRegisterRequestProxy(t)
+		args.WriteRequest.Token = "root"
+		args.Service.Service = "another-proxy"
+		args.Service.Proxy.DestinationServiceName = "foo"
+		args.Check = &structs.HealthCheck{
+			Name:      "proxy",
+			Status:    api.HealthPassing,
+			ServiceID: args.Service.Service,
+		}
+		assert.Nil(msgpackrpc.CallWithCodec(codec, "Catalog.Register", &args, &out))
+	}
+
+	// List w/ token. This should disallow because we don't have permission
+	// to read "bar"
+	req := structs.ServiceSpecificRequest{
+		Connect:      true,
+		Datacenter:   "dc1",
+		ServiceName:  "bar",
+		QueryOptions: structs.QueryOptions{Token: token},
+	}
+	var resp structs.IndexedCheckServiceNodes
+	assert.Nil(msgpackrpc.CallWithCodec(codec, "Health.ServiceNodes", &req, &resp))
+	assert.Len(resp.Nodes, 0)
+
+	// List w/ token. This should work since we're requesting "foo", but should
+	// also only contain the proxies with names that adhere to our ACL.
+	req = structs.ServiceSpecificRequest{
+		Connect:      true,
+		Datacenter:   "dc1",
+		ServiceName:  "foo",
+		QueryOptions: structs.QueryOptions{Token: token},
+	}
+	assert.Nil(msgpackrpc.CallWithCodec(codec, "Health.ServiceNodes", &req, &resp))
+	assert.Len(resp.Nodes, 1)
 }
 
 func TestHealth_NodeChecks_FilterACL(t *testing.T) {

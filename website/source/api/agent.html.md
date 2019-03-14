@@ -31,12 +31,13 @@ by agent. The strongly consistent view of nodes is instead provided by
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `node:read`  |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `node:read`  |
 
 ### Parameters
 
@@ -44,11 +45,17 @@ The table below shows this endpoint's support for
   members (which is the default). This is only eligible for agents running in
   **server mode**. This is specified as part of the URL as a query parameter.
 
+- `segment` `(string: "")` - (Enterprise-only) Specifies the segment to list members for.
+  If left blank, this will query for the default segment when connecting to a server and
+  the agent's own segment when connecting to a client (clients can only be part of one
+  network segment). When querying a server, setting this to the special string `_all`
+  will show members in all segments.
+
 ### Sample Request
 
 ```text
 $ curl \
-    https://consul.rocks/v1/agent/members
+    http://127.0.0.1:8500/v1/agent/members
 ```
 
 ### Sample Response
@@ -79,7 +86,10 @@ $ curl \
 ## Read Configuration
 
 This endpoint returns the configuration and member information of the local
-agent.
+agent. The `Config` element contains a subset of the configuration and its
+format will not change in a backwards incompatible way between releases.
+`DebugConfig` contains the full runtime configuration but its format is subject
+to change without notice or deprecation.
 
 | Method | Path                         | Produces                   |
 | ------ | ---------------------------- | -------------------------- |
@@ -87,18 +97,19 @@ agent.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `agent:read` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `agent:read` |
 
 ### Sample Request
 
 ```text
 $ curl \
-    https://consul.rocks/v1/agent/self
+    http://127.0.0.1:8500/v1/agent/self
 ```
 
 ### Sample Response
@@ -106,42 +117,16 @@ $ curl \
 ```json
 {
   "Config": {
-    "Bootstrap": true,
-    "Server": true,
     "Datacenter": "dc1",
-    "DataDir": "/tmp/consul",
-    "DNSRecursor": "",
-    "DNSRecursors": [],
-    "Domain": "consul.",
-    "LogLevel": "INFO",
-    "NodeID": "40e4a748-2192-161a-0510-9bf59fe950b5",
     "NodeName": "foobar",
-    "ClientAddr": "127.0.0.1",
-    "BindAddr": "0.0.0.0",
-    "AdvertiseAddr": "10.1.10.12",
-    "Ports": {
-      "DNS": 8600,
-      "HTTP": 8500,
-      "RPC": 8400,
-      "SerfLan": 8301,
-      "SerfWan": 8302,
-      "Server": 8300
-    },
-    "LeaveOnTerm": false,
-    "SkipLeaveOnInt": false,
-    "StatsiteAddr": "",
-    "Protocol": 1,
-    "EnableDebug": false,
-    "VerifyIncoming": false,
-    "VerifyOutgoing": false,
-    "CAFile": "",
-    "CertFile": "",
-    "KeyFile": "",
-    "StartJoin": [],
-    "UiDir": "",
-    "PidFile": "",
-    "EnableSyslog": false,
-    "RejoinAfterLeave": false
+    "NodeID": "9d754d17-d864-b1d3-e758-f3fe25a9874f",
+    "Server": true,
+    "Revision": "deadbeef",
+    "Version": "1.0.0"
+  },
+  "DebugConfig": {
+    ... full runtime configuration ...
+    ... format subject to change ...
   },
   "Coord": {
     "Adjustment": 0,
@@ -192,19 +177,20 @@ section on the agent options page for details on which options are supported.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `agent:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `agent:write` |
 
 ### Sample Request
 
 ```text
 $ curl \
     --request PUT \
-    https://consul.rocks/v1/agent/reload
+    http://127.0.0.1:8500/v1/agent/reload
 ```
 
 ## Enable Maintenance Mode
@@ -222,12 +208,13 @@ restart.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `node:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `node:write` |
 
 ### Parameters
 
@@ -246,8 +233,142 @@ The table below shows this endpoint's support for
 ```text
 $ curl \
     --request PUT \
-    https://consul.rocks/v1/agent/maintenance?enable=true&reason=For+API+docs
+    http://127.0.0.1:8500/v1/agent/maintenance?enable=true&reason=For+API+docs
 ```
+
+## View Metrics
+
+This endpoint will dump the metrics for the most recent finished interval.
+For more information about metrics, see the [telemetry](/docs/agent/telemetry.html)
+page.
+
+In order to enable [Prometheus](https://prometheus.io/) support, you need to use the
+configuration directive
+[`prometheus_retention_time`](/docs/agent/options.html#telemetry-prometheus_retention_time).
+
+Note: If your metric includes labels that use the same key name multiple times
+(i.e. tag=tag2 and tag=tag1), only the sorted last value (tag=tag2) will be visible on
+this endpoint due to a display issue. The complete label set is correctly applied and
+passed to external metrics providers even though it is not visible through this endpoint.
+
+| Method | Path                               | Produces                                   |
+| ------ | ---------------------------------- | ------------------------------------------ |
+| `GET`  | `/agent/metrics`                   | `application/json`                         |
+| `GET`  | `/agent/metrics?format=prometheus` | `text/plain; version=0.0.4; charset=utf-8` |
+
+The table below shows this endpoint's support for
+[blocking queries](/api/index.html#blocking-queries),
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
+[required ACLs](/api/index.html#acls).
+
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `agent:read` |
+
+### Sample Request
+
+```text
+$ curl \
+    http://127.0.0.1:8500/v1/agent/metrics
+```
+
+### Sample Response
+
+```json
+{
+    "Timestamp": "2017-08-08 02:55:10 +0000 UTC",
+    "Gauges": [
+        {
+            "Name": "consul.consul.session_ttl.active",
+            "Value": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "consul.runtime.alloc_bytes",
+            "Value": 4704344,
+            "Labels": {}
+        },
+        {
+            "Name": "consul.runtime.free_count",
+            "Value": 74063,
+            "Labels": {}
+        }
+    ],
+    "Points": [],
+    "Counters": [
+        {
+            "Name": "consul.consul.catalog.service.query",
+            "Count": 1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {
+                "service": "consul"
+            }
+        },
+        {
+            "Name": "consul.raft.apply",
+            "Count": 1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        }
+    ],
+    "Samples": [
+        {
+            "Name": "consul.consul.http.GET.v1.agent.metrics",
+            "Count": 1,
+            "Sum": 0.1817069947719574,
+            "Min": 0.1817069947719574,
+            "Max": 0.1817069947719574,
+            "Mean": 0.1817069947719574,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "consul.consul.http.GET.v1.catalog.service._",
+            "Count": 1,
+            "Sum": 0.23342099785804749,
+            "Min": 0.23342099785804749,
+            "Max": 0.23342099785804749,
+            "Mean": 0.23342099785804749,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "consul.serf.queue.Query",
+            "Count": 20,
+            "Sum": 0,
+            "Min": 0,
+            "Max": 0,
+            "Mean": 0,
+            "Stddev": 0,
+            "Labels": {}
+        }
+    ]
+}
+```
+
+- `Timestamp` is the timestamp of the interval for the displayed metrics. Metrics are
+aggregated on a ten second interval, so this value (along with the displayed metrics)
+will change every ten seconds.
+
+- `Gauges` is a list of gauges which store one value that is updated as time goes on,
+such as the amount of memory allocated.
+
+- `Points` is a list of point metrics, which each store a series of points under a given name.
+
+- `Counters` is a list of counters, which store info about a metric that is incremented
+over time such as the number of requests to an HTTP endpoint.
+
+- `Samples` is a list of samples, which store info about the amount of time spent on an
+operation, such as the time taken to serve a request to a specific http endpoint.
 
 ## Stream Logs
 
@@ -259,12 +380,13 @@ This endpoint streams logs from the local agent until the connection is closed.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `agent:read` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `agent:read` |
 
 ### Parameters
 
@@ -275,7 +397,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-    https://consul.rocks/v1/agent/monitor
+    http://127.0.0.1:8500/v1/agent/monitor
 ```
 
 ### Sample Response
@@ -296,16 +418,17 @@ This endpoint instructs the agent to attempt to connect to a given address.
 
 | Method | Path                         | Produces                   |
 | ------ | ---------------------------- | -------------------------- |
-| `GET`  | `/agent/join/:address`       | `application/json`         |
+| `PUT`  | `/agent/join/:address`       | `application/json`         |
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `agent:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `agent:write` |
 
 ### Parameters
 
@@ -320,7 +443,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-    https://consul.rocks/v1/agent/join/1.2.3.4
+    http://127.0.0.1:8500/v1/agent/join/1.2.3.4
 ```
 
 ## Graceful Leave and Shutdown
@@ -339,19 +462,20 @@ can affect cluster availability.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `agent:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `agent:write` |
 
 ### Sample Request
 
 ```text
 $ curl \
     --request PUT \
-    https://consul.rocks/v1/agent/leave
+    http://127.0.0.1:8500/v1/agent/leave
 ```
 
 ## Force Leave and Shutdown
@@ -364,51 +488,74 @@ state allows its old entries to be removed.
 
 | Method | Path                         | Produces                   |
 | ------ | ---------------------------- | -------------------------- |
-| `PUT`  | `/agent/force-leave`         | `application/json`         |
+| `PUT`  | `/agent/force-leave/:node`   | `application/json`         |
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `agent:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `agent:write` |
+
+### Parameters
+
+- `node` `(string: <required>)` - Specifies the name of the node to be forced into `left` state. This is specified as part of the URL.
 
 ### Sample Request
 
 ```text
 $ curl \
     --request PUT \
-    https://consul.rocks/v1/agent/force-leave
+    http://127.0.0.1:8500/v1/agent/force-leave/agent-one
 ```
 
 ## Update ACL Tokens
 
 This endpoint updates the ACL tokens currently in use by the agent. It can be
 used to introduce ACL tokens to the agent for the first time, or to update
-tokens that were initially loaded from the agent's configuration. Tokens are
-not persisted, so will need to be updated again if the agent is restarted.
+tokens that were initially loaded from the agent's configuration. Tokens will be persisted
+only if the [`acl.enable_token_persistence`](/docs/agent/options.html#acl_enable_token_persistence)
+configuration is `true`. When not being persisted, they will need to be reset if the agent
+is restarted.
+
+| Method | Path                        | Produces                   |
+| ------ | --------------------------- | -------------------------- |
+| `PUT`  | `/agent/token/default`      | `application/json`         |
+| `PUT`  | `/agent/token/agent`        | `application/json`         |
+| `PUT`  | `/agent/token/agent_master` | `application/json`         |
+| `PUT`  | `/agent/token/replication`  | `application/json`         |
+
+The paths above correspond to the token names as found in the agent configuration:
+[`default`](/docs/agent/options.html#acl_tokens_default), [`agent`](/docs/agent/options.html#acl_tokens_agent),
+[`agent_master`](/docs/agent/options.html#acl_tokens_agent_master), and
+[`replication`](/docs/agent/options.html#acl_tokens_replication).
+
+-> **Deprecation Note:** The following paths were deprecated in version 1.4.3
 
 | Method | Path                                  | Produces                   |
 | ------ | ------------------------------------- | -------------------------- |
 | `PUT`  | `/agent/token/acl_token`              | `application/json`         |
 | `PUT`  | `/agent/token/acl_agent_token`        | `application/json`         |
 | `PUT`  | `/agent/token/acl_agent_master_token` | `application/json`         |
+| `PUT`  | `/agent/token/acl_replication_token`  | `application/json`         |
 
-The paths above correspond to the token names as found in the agent configuration,
-[`acl_token`](/docs/agent/options.html#acl_token),
-[`acl_agent_token`](/docs/agent/options.html#acl_agent_token),
-and [`acl_agent_master_token`](/docs/agent/options.html#acl_agent_master_token).
+The paths above correspond to the token names as found in the agent configuration:
+[`acl_token`](/docs/agent/options.html#acl_token_legacy), [`acl_agent_token`](/docs/agent/options.html#acl_agent_token_legacy),
+[`acl_agent_master_token`](/docs/agent/options.html#acl_agent_master_token_legacy), and
+[`acl_replication_token`](/docs/agent/options.html#acl_replication_token_legacy).
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `agent:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `agent:write` |
 
 ### Parameters
 
@@ -428,5 +575,5 @@ The table below shows this endpoint's support for
 $ curl \
     --request PUT \
     --data @payload.json \
-    https://consul.rocks/v1/agent/token/acl_token
+    http://127.0.0.1:8500/v1/agent/token/acl_token
 ```

@@ -7,12 +7,16 @@ import (
 	"os"
 	"time"
 
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/agent/consul/autopilot"
+	"github.com/hashicorp/consul/agent/structs"
+	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/tlsutil"
 	"github.com/hashicorp/consul/types"
+	"github.com/hashicorp/consul/version"
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/raft"
 	"github.com/hashicorp/serf/serf"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -48,6 +52,17 @@ func init() {
 	}
 }
 
+// (Enterprise-only) NetworkSegment is the address and port configuration
+// for a network segment.
+type NetworkSegment struct {
+	Name       string
+	Bind       string
+	Port       int
+	Advertise  string
+	RPCAddr    *net.TCPAddr
+	SerfConfig *serf.Config
+}
+
 // Config is used to configure the server
 type Config struct {
 	// Bootstrap mode is used to bring up the first Consul server.
@@ -60,10 +75,14 @@ type Config struct {
 	// of nodes.
 	BootstrapExpect int
 
-	// Datacenter is the datacenter this Consul server represents
+	// Datacenter is the datacenter this Consul server represents.
 	Datacenter string
 
-	// DataDir is the directory to store our state in
+	// PrimaryDatacenter is the authoritative datacenter for features like ACLs
+	// and Connect.
+	PrimaryDatacenter string
+
+	// DataDir is the directory to store our state in.
 	DataDir string
 
 	// DevMode is used to enable a development server mode.
@@ -103,6 +122,13 @@ type Config struct {
 
 	// RPCSrcAddr is the source address for outgoing RPC connections.
 	RPCSrcAddr *net.TCPAddr
+
+	// (Enterprise-only) The network segment this agent is part of.
+	Segment string
+
+	// (Enterprise-only) Segments is a list of network segments for a server to
+	// bind on.
+	Segments []NetworkSegment
 
 	// SerfLANConfig is the configuration for the intra-dc serf
 	SerfLANConfig *serf.Config
@@ -191,6 +217,13 @@ type Config struct {
 	// operators track which versions are actively deployed
 	Build string
 
+	// ACLEnabled is used to enable ACLs
+	ACLsEnabled bool
+
+	// ACLEnforceVersion8 is used to gate a set of ACL policy features that
+	// are opt-in prior to Consul 0.8 and opt-out in Consul 0.8 and later.
+	ACLEnforceVersion8 bool
+
 	// ACLMasterToken is used to bootstrap the ACL system. It should be specified
 	// on the servers in the ACLDatacenter. When the leader comes online, it ensures
 	// that the Master token is available. This provides the initial token.
@@ -200,10 +233,26 @@ type Config struct {
 	// tokens. If not provided, ACL verification is disabled.
 	ACLDatacenter string
 
-	// ACLTTL controls the time-to-live of cached ACL policies.
+	// ACLTokenTTL controls the time-to-live of cached ACL tokens.
 	// It can be set to zero to disable caching, but this adds
 	// a substantial cost.
-	ACLTTL time.Duration
+	ACLTokenTTL time.Duration
+
+	// ACLPolicyTTL controls the time-to-live of cached ACL policies.
+	// It can be set to zero to disable caching, but this adds
+	// a substantial cost.
+	ACLPolicyTTL time.Duration
+
+	// ACLDisabledTTL is the time between checking if ACLs should be
+	// enabled. This
+	ACLDisabledTTL time.Duration
+
+	// ACLTokenReplication is used to enabled token replication.
+	//
+	// By default policy-only replication is enabled. When token
+	// replication is off and the primary datacenter is not
+	// yet upgraded to the new ACLs no replication will be performed
+	ACLTokenReplication bool
 
 	// ACLDefaultPolicy is used to control the ACL interaction when
 	// there is no defined policy. This can be "allow" which means
@@ -213,32 +262,30 @@ type Config struct {
 
 	// ACLDownPolicy controls the behavior of ACLs if the ACLDatacenter
 	// cannot be contacted. It can be either "deny" to deny all requests,
-	// or "extend-cache" which ignores the ACLCacheInterval and uses
-	// cached policies. If a policy is not in the cache, it acts like deny.
+	// "extend-cache" or "async-cache" which ignores the ACLCacheInterval and
+	// uses cached policies.
+	// If a policy is not in the cache, it acts like deny.
 	// "allow" can be used to allow all requests. This is not recommended.
 	ACLDownPolicy string
 
-	// ACLReplicationToken is used to fetch ACLs from the ACLDatacenter in
-	// order to replicate them locally. Setting this to a non-empty value
-	// also enables replication. Replication is only available in datacenters
-	// other than the ACLDatacenter.
-	ACLReplicationToken string
+	// ACLReplicationRate is the max number of replication rounds that can
+	// be run per second. Note that either 1 or 2 RPCs are used during each replication
+	// round
+	ACLReplicationRate int
 
-	// ACLReplicationInterval is the interval at which replication passes
-	// will occur. Queries to the ACLDatacenter may block, so replication
-	// can happen less often than this, but the interval forms the upper
-	// limit to how fast we will go if there was constant ACL churn on the
-	// remote end.
-	ACLReplicationInterval time.Duration
+	// ACLReplicationBurst is how many replication RPCs can be bursted after a
+	// period of idleness
+	ACLReplicationBurst int
 
 	// ACLReplicationApplyLimit is the max number of replication-related
 	// apply operations that we allow during a one second period. This is
 	// used to limit the amount of Raft bandwidth used for replication.
 	ACLReplicationApplyLimit int
 
-	// ACLEnforceVersion8 is used to gate a set of ACL policy features that
-	// are opt-in prior to Consul 0.8 and opt-out in Consul 0.8 and later.
-	ACLEnforceVersion8 bool
+	// ACLEnableKeyListPolicy is used to gate enforcement of the new "list" policy that
+	// protects listing keys by prefix. This behavior is opt-in
+	// by default in Consul 1.0 and later.
+	ACLEnableKeyListPolicy bool
 
 	// TombstoneTTL is used to control how long KV tombstones are retained.
 	// This provides a window of time where the X-Consul-Index is monotonic.
@@ -296,9 +343,24 @@ type Config struct {
 	// place, and a small jitter is applied to avoid a thundering herd.
 	RPCHoldTimeout time.Duration
 
+	// RPCRate and RPCMaxBurst control how frequently RPC calls are allowed
+	// to happen. In any large enough time interval, rate limiter limits the
+	// rate to RPCRate tokens per second, with a maximum burst size of
+	// RPCMaxBurst events. As a special case, if RPCRate == Inf (the infinite
+	// rate), RPCMaxBurst is ignored.
+	//
+	// See https://en.wikipedia.org/wiki/Token_bucket for more about token
+	// buckets.
+	RPCRate     rate.Limit
+	RPCMaxBurst int
+
+	// LeaveDrainTime is used to wait after a server has left the LAN Serf
+	// pool for RPCs to drain and new requests to be sent to other servers.
+	LeaveDrainTime time.Duration
+
 	// AutopilotConfig is used to apply the initial autopilot config when
 	// bootstrapping.
-	AutopilotConfig *structs.AutopilotConfig
+	AutopilotConfig *autopilot.Config
 
 	// ServerHealthInterval is the frequency with which the health of the
 	// servers in the cluster will be updated.
@@ -308,6 +370,29 @@ type Config struct {
 	// autopilot tasks, such as promoting eligible non-voters and removing
 	// dead servers.
 	AutopilotInterval time.Duration
+
+	// ConnectEnabled is whether to enable Connect features such as the CA.
+	ConnectEnabled bool
+
+	// CAConfig is used to apply the initial Connect CA configuration when
+	// bootstrapping.
+	CAConfig *structs.CAConfiguration
+}
+
+func (c *Config) ToTLSUtilConfig() tlsutil.Config {
+	return tlsutil.Config{
+		VerifyIncoming:           c.VerifyIncoming,
+		VerifyOutgoing:           c.VerifyOutgoing,
+		CAFile:                   c.CAFile,
+		CAPath:                   c.CAPath,
+		CertFile:                 c.CertFile,
+		KeyFile:                  c.KeyFile,
+		NodeName:                 c.NodeName,
+		ServerName:               c.ServerName,
+		TLSMinVersion:            c.TLSMinVersion,
+		CipherSuites:             c.TLSCipherSuites,
+		PreferServerCipherSuites: c.TLSPreferServerCipherSuites,
+	}
 }
 
 // CheckProtocolVersion validates the protocol version.
@@ -332,7 +417,7 @@ func (c *Config) CheckACL() error {
 	switch c.ACLDownPolicy {
 	case "allow":
 	case "deny":
-	case "extend-cache":
+	case "async-cache", "extend-cache":
 	default:
 		return fmt.Errorf("Unsupported down ACL policy: %s", c.ACLDownPolicy)
 	}
@@ -347,20 +432,22 @@ func DefaultConfig() *Config {
 	}
 
 	conf := &Config{
-		Build:                    "0.8.0",
+		Build:                    version.Version,
 		Datacenter:               DefaultDC,
 		NodeName:                 hostname,
 		RPCAddr:                  DefaultRPCAddr,
 		RaftConfig:               raft.DefaultConfig(),
-		SerfLANConfig:            serf.DefaultConfig(),
-		SerfWANConfig:            serf.DefaultConfig(),
+		SerfLANConfig:            lib.SerfDefaultConfig(),
+		SerfWANConfig:            lib.SerfDefaultConfig(),
 		SerfFloodInterval:        60 * time.Second,
 		ReconcileInterval:        60 * time.Second,
 		ProtocolVersion:          ProtocolVersion2Compatible,
-		ACLTTL:                   30 * time.Second,
+		ACLPolicyTTL:             30 * time.Second,
+		ACLTokenTTL:              30 * time.Second,
 		ACLDefaultPolicy:         "allow",
 		ACLDownPolicy:            "extend-cache",
-		ACLReplicationInterval:   30 * time.Second,
+		ACLReplicationRate:       1,
+		ACLReplicationBurst:      5,
 		ACLReplicationApplyLimit: 100, // ops / sec
 		TombstoneTTL:             15 * time.Minute,
 		TombstoneTTLGranularity:  30 * time.Second,
@@ -373,20 +460,28 @@ func DefaultConfig() *Config {
 		CoordinateUpdateBatchSize:  128,
 		CoordinateUpdateMaxBatches: 5,
 
-		// This holds RPCs during leader elections. For the default Raft
-		// config the election timeout is 5 seconds, so we set this a
-		// bit longer to try to cover that period. This should be more
-		// than enough when running in the high performance mode.
-		RPCHoldTimeout: 7 * time.Second,
+		RPCRate:     rate.Inf,
+		RPCMaxBurst: 1000,
 
 		TLSMinVersion: "tls10",
 
-		AutopilotConfig: &structs.AutopilotConfig{
+		// TODO (slackpad) - Until #3744 is done, we need to keep these
+		// in sync with agent/config/default.go.
+		AutopilotConfig: &autopilot.Config{
 			CleanupDeadServers:      true,
 			LastContactThreshold:    200 * time.Millisecond,
 			MaxTrailingLogs:         250,
 			ServerStabilizationTime: 10 * time.Second,
 		},
+
+		CAConfig: &structs.CAConfiguration{
+			Provider: "consul",
+			Config: map[string]interface{}{
+				"RotationPeriod": "2160h",
+				"LeafCertTTL":    "72h",
+			},
+		},
+
 		ServerHealthInterval: 2 * time.Second,
 		AutopilotInterval:    10 * time.Second,
 	}
@@ -403,50 +498,18 @@ func DefaultConfig() *Config {
 	conf.SerfLANConfig.MemberlistConfig.BindPort = DefaultLANSerfPort
 	conf.SerfWANConfig.MemberlistConfig.BindPort = DefaultWANSerfPort
 
-	// TODO: default to 3 in Consul 0.9
-	// Use a transitional version of the raft protocol to interoperate with
-	// versions 1 and 3
-	conf.RaftConfig.ProtocolVersion = 2
-	conf.ScaleRaft(DefaultRaftMultiplier)
+	// Raft protocol version 3 only works with other Consul servers running
+	// 0.8.0 or later.
+	conf.RaftConfig.ProtocolVersion = 3
 
 	// Disable shutdown on removal
 	conf.RaftConfig.ShutdownOnRemove = false
 
-	// Check every 5 seconds to see if there are enough new entries for a snapshot
-	conf.RaftConfig.SnapshotInterval = 5 * time.Second
+	// Check every 5 seconds to see if there are enough new entries for a snapshot, can be overridden
+	conf.RaftConfig.SnapshotInterval = 30 * time.Second
+
+	// Snapshots are created every 16384 entries by default, can be overridden
+	conf.RaftConfig.SnapshotThreshold = 16384
 
 	return conf
-}
-
-// ScaleRaft sets the config to have Raft timing parameters scaled by the given
-// performance multiplier. This is done in an idempotent way so it's not tricky
-// to call this when composing configurations and potentially calling this
-// multiple times on the same structure.
-func (c *Config) ScaleRaft(raftMultRaw uint) {
-	raftMult := time.Duration(raftMultRaw)
-
-	def := raft.DefaultConfig()
-	c.RaftConfig.HeartbeatTimeout = raftMult * def.HeartbeatTimeout
-	c.RaftConfig.ElectionTimeout = raftMult * def.ElectionTimeout
-	c.RaftConfig.LeaderLeaseTimeout = raftMult * def.LeaderLeaseTimeout
-}
-
-// tlsConfig maps this config into a tlsutil config.
-func (c *Config) tlsConfig() *tlsutil.Config {
-	tlsConf := &tlsutil.Config{
-		VerifyIncoming:           c.VerifyIncoming,
-		VerifyOutgoing:           c.VerifyOutgoing,
-		VerifyServerHostname:     c.VerifyServerHostname,
-		UseTLS:                   c.UseTLS,
-		CAFile:                   c.CAFile,
-		CAPath:                   c.CAPath,
-		CertFile:                 c.CertFile,
-		KeyFile:                  c.KeyFile,
-		NodeName:                 c.NodeName,
-		ServerName:               c.ServerName,
-		Domain:                   c.Domain,
-		TLSMinVersion:            c.TLSMinVersion,
-		PreferServerCipherSuites: c.TLSPreferServerCipherSuites,
-	}
-	return tlsConf
 }

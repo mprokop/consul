@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/consul/testutil/retry"
+	"github.com/hashicorp/raft"
 	"github.com/hashicorp/serf/serf"
+	"github.com/stretchr/testify/require"
 )
 
 func waitForLeader(servers ...*Server) error {
@@ -29,7 +31,7 @@ func waitForLeader(servers ...*Server) error {
 }
 
 // wantPeers determines whether the server has the given
-// number of raft peers.
+// number of voting raft peers.
 func wantPeers(s *Server, peers int) error {
 	n, err := s.numPeers()
 	if err != nil {
@@ -37,6 +39,42 @@ func wantPeers(s *Server, peers int) error {
 	}
 	if got, want := n, peers; got != want {
 		return fmt.Errorf("got %d peers want %d", got, want)
+	}
+	return nil
+}
+
+// wantRaft determines if the servers have all of each other in their
+// Raft configurations,
+func wantRaft(servers []*Server) error {
+	// Make sure all the servers are represented in the Raft config,
+	// and that there are no extras.
+	verifyRaft := func(c raft.Configuration) error {
+		want := make(map[raft.ServerID]bool)
+		for _, s := range servers {
+			want[s.config.RaftConfig.LocalID] = true
+		}
+
+		for _, s := range c.Servers {
+			if !want[s.ID] {
+				return fmt.Errorf("don't want %q", s.ID)
+			}
+			delete(want, s.ID)
+		}
+
+		if len(want) > 0 {
+			return fmt.Errorf("didn't find %v", want)
+		}
+		return nil
+	}
+
+	for _, s := range servers {
+		future := s.raft.GetConfiguration()
+		if err := future.Error(); err != nil {
+			return err
+		}
+		if err := verifyRaft(future.Configuration()); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -113,6 +151,14 @@ func joinWAN(t *testing.T, member, leader *Server) {
 	if !seeEachOther(leader.WANMembers(), member.WANMembers(), leaderAddr, memberAddr) {
 		t.Fatalf("leader and member cannot see each other on WAN")
 	}
+}
+
+func waitForNewACLs(t *testing.T, server *Server) {
+	retry.Run(t, func(r *retry.R) {
+		require.False(r, server.UseLegacyACLs(), "Server cannot use new ACLs")
+	})
+
+	require.False(t, server.UseLegacyACLs(), "Server cannot use new ACLs")
 }
 
 func seeEachOther(a, b []serf.Member, addra, addrb string) bool {

@@ -19,13 +19,14 @@ would be possible given the limited entry points exposed by DNS.
 See the [Geo Failover Guide](/docs/guides/geo-failover.html) for details and
 examples for using prepared queries to implement geo failover for services.
 
-See the ACL Guide's [prepared query rules](/docs/guides/acl.html#prepared-query-rules)
-section for more details about how prepared queries work with Consul's ACL system.
+See the [prepared query rules](/docs/agent/acl-rules.html#prepared-query-rules)
+section of the agent ACL documentation for more details about how prepared
+queries work with Consul's ACL system.
 
 ### Prepared Query Templates
 
 Consul 0.6.4 and later support prepared query templates. These are created
-similar to static templates, except with some additional fields and features.
+similar to static queries, except with some additional fields and features.
 Here is an example prepared query template:
 
 ```json
@@ -87,6 +88,25 @@ populate the query before it is executed. All of the string fields inside the
   doesn't match, or an invalid index is given, then `${match(N)}` will return an
   empty string.
 
+- `${agent.segment}` has the network segment (Enterprise-only) of the agent that
+  initiated the query. This can be used with the `NodeMeta` field to limit the results
+  of a query to service instances within its own network segment:
+
+    ```json
+    {
+      "Name": "",
+      "Template": {
+        "Type": "name_prefix_match"
+      },
+      "Service": {
+        "Service": "${name.full}",
+        "NodeMeta": {"consul-network-segment": "${agent.segment}"}
+      }
+    }
+    ```
+  This will map all names of the form `<service>.query.consul` over DNS to a query
+  that will select an instance of the service in the agent's own network segment.
+
 Using templates, it is possible to apply prepared query behaviors to many
 services with a single template. Here's an example template that matches any
 query and applies a failover policy to it:
@@ -123,12 +143,13 @@ successfully.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `query:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `query:write` |
 
 ### Parameters
 
@@ -151,15 +172,6 @@ The table below shows this endpoint's support for
   omitted, the client's ACL Token will be used to determine if they have access
   to the service being queried. If the client does not supply an ACL Token, the
   anonymous token will be used.
-
-- `Near` `(string: "")` - Specifies a node to sort near based on distance
-  sorting using [Network Coordinates](/docs/internals/coordinates.html). The
-  nearest instance to the specified node will be returned first, and subsequent
-  nodes in the response will be sorted in ascending order of estimated
-  round-trip times. If the node given does not exist, the nodes in the response
-  will be shuffled. Using `_agent` is supported, and will automatically return
-  results nearest the agent servicing the request. If unspecified, the response
-  will be shuffled by default.
 
 - `Service` `(Service: <required>)` - Specifies the structure to define the query's behavior.
 
@@ -187,10 +199,33 @@ The table below shows this endpoint's support for
         failover, even if it is selected by both `NearestN` and is listed in
         `Datacenters`.
 
+  - `IgnoreCheckIDs` `(array<string>: nil)` - Specifies a list of check IDs that
+    should be ignored when filtering unhealthy instances. This is mostly useful
+    in an emergency or as a temporary measure when a health check is found to be
+    unreliable. Being able to ignore it in centrally-defined queries can be
+    simpler than de-registering the check as an interim solution until the check
+    can be fixed.
+
   - `OnlyPassing` `(bool: false)` - Specifies the behavior of the query's health
     check filtering. If this is set to false, the results will include nodes
     with checks in the passing as well as the warning states. If this is set to
     true, only nodes with checks in the passing state will be returned.
+
+  - `Near` `(string: "")` - Specifies a node to sort near based on distance
+     sorting using [Network Coordinates](/docs/internals/coordinates.html). The
+     nearest instance to the specified node will be returned first, and subsequent
+     nodes in the response will be sorted in ascending order of estimated
+     round-trip times. If the node given does not exist, the nodes in the response
+     will be shuffled. If unspecified, the response will be shuffled by default.
+
+       - `_agent` - Returns results nearest the agent servicing the request.
+       - `_ip` - Returns results nearest to the node associated with the source IP
+         where the query was executed from. For HTTP the source IP is the remote
+         peer's IP address or the value of the X-Forwarded-For header with the
+         header taking precedence. For DNS the source IP is the remote peer's IP
+         address or the value of the ENDS client IP with the EDNS client IP
+         taking precedence.
+
 
   - `Tags` `(array<string>: nil)` - Specifies a list of service tags to filter
     the query results. For a service to pass the tag filter it must have *all*
@@ -199,6 +234,17 @@ The table below shows this endpoint's support for
   - `NodeMeta` `(map<string|string>: nil)` - Specifies a list of user-defined
     key/value pairs that will be used for filtering the query results to nodes
     with the given metadata values present.
+
+  - `ServiceMeta` `(map<string|string>: nil)` - Specifies a list of user-defined
+    key/value pairs that will be used for filtering the query results to services
+    with the given metadata values present.
+
+  - `Connect` `(bool: false)` - If true, only [Connect-capable](/docs/connect/index.html) services
+    for the specified service name will be returned. This includes both
+	natively integrated services and proxies. For proxies, the proxy name
+	may not match `Service`, because the proxy destination will. Any
+	constrains beyond the service name such as `Near`, `Tags`, and `NodeMeta`
+	are applied to Connect-capable service.
 
 - `DNS` `(DNS: nil)` - Specifies DNS configuration
 
@@ -222,7 +268,8 @@ The table below shows this endpoint's support for
     "Near": "node1",
     "OnlyPassing": false,
     "Tags": ["primary", "!experimental"],
-    "NodeMeta": {"instance_type": "m3.large"}
+    "NodeMeta": {"instance_type": "m3.large"},
+    "ServiceMeta": {"environment": "production"}
   },
   "DNS": {
     "TTL": "10s"
@@ -236,7 +283,7 @@ The table below shows this endpoint's support for
 $ curl \
     --request POST \
     --data @payload.json \
-    https://consul.rocks/v1/query
+    http://127.0.0.1:8500/v1/query
 ```
 
 ### Sample Response
@@ -257,12 +304,13 @@ This endpoint returns a list of all prepared queries.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `query:read` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `query:read` |
 
 ### Parameters
 
@@ -274,7 +322,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-    https://consul.rocks/v1/query
+    http://127.0.0.1:8500/v1/query
 ```
 
 ### Sample Response
@@ -294,7 +342,8 @@ $ curl \
       },
       "OnlyPassing": false,
       "Tags": ["primary", "!experimental"],
-      "NodeMeta": {"instance_type": "m3.large"}
+      "NodeMeta": {"instance_type": "m3.large"},
+      "ServiceMeta": {"environment": "production"}
     },
     "DNS": {
       "TTL": "10s"
@@ -318,12 +367,13 @@ given ID, an error is returned.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `query:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `query:write` |
 
 ### Parameters
 
@@ -337,13 +387,13 @@ The table below shows this endpoint's support for
 The body is the same as is used to create a prepared query. Please see above for
 more information.
 
-### Sample Response
+### Sample Request
 
 ```text
 $ curl \
     --request PUT \
     --data @payload.json \
-    https://consul.rocks/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05
+    http://127.0.0.1:8500/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05
 ```
 
 ## Read Prepared Query
@@ -357,12 +407,13 @@ given ID, an error is returned.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `query:read` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `query:read` |
 
 ### Parameters
 
@@ -377,7 +428,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-  https://consul.rocks/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05
+  http://127.0.0.1:8500/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05
 ```
 
 ### Sample Response
@@ -396,12 +447,13 @@ given ID, an error is returned.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required  |
-| ---------------- | ----------------- | ------------- |
-| `NO`             | `none`            | `query:write` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required  |
+| ---------------- | ----------------- | ------------- | ------------- |
+| `NO`             | `none`            | `none`        | `query:write` |
 
 ### Parameters
 
@@ -417,7 +469,7 @@ The table below shows this endpoint's support for
 ```text
 $ curl \
     --request DELETE \
-    https://consul.rocks/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05
+    http://127.0.0.1:8500/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05
 ```
 
 ## Execute Prepared Query
@@ -431,12 +483,13 @@ given ID, an error is returned.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `depends`<sup>1</sup>    |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `simple`      | `depends`<sup>1</sup>    |
 
 <sup>1</sup> If an ACL Token was bound to the query when it was defined then it
 will be used when executing the request. Otherwise, the client's supplied ACL
@@ -455,18 +508,25 @@ Token will be used.
 
 - `near` `(string: "")` - Specifies to sort the resulting list in ascending
   order based on the estimated round trip time from that node. Passing
-  `?near=_agent` will use the agent's node for the sort. If this is not present,
+  `?near=_agent` will use the agent's node for the sort. Passing `?near=_ip`
+  will use the source IP of the request or the value of the X-Forwarded-For
+  header to lookup the node to use for the sort. If this is not present,
   the default behavior will shuffle the nodes randomly each time the query is
   executed.
 
 - `limit` `(int: 0)` - Limit the size of the list to the given number of nodes.
   This is applied after any sorting or shuffling.
 
+- `connect` `(bool: false)` - If true, limit results to nodes that are
+  Connect-capable only. This can also be specified directly on the template
+  itself to force all executions of a query to be Connect-only. See the
+  template documentation for more information.
+
 ### Sample Request
 
 ```text
 $ curl \
-    https://consul.rocks/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05/execute?near=_agent
+    http://127.0.0.1:8500/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05/execute?near=_agent
 ```
 
 ### Sample Response
@@ -491,6 +551,7 @@ $ curl \
         "ID": "redis",
         "Service": "redis",
         "Tags": null,
+        "Meta": {"redis_version": "4.0"},
         "Port": 8000
       },
       "Checks": [
@@ -550,12 +611,13 @@ interpolation.
 
 The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries),
-[consistency modes](/api/index.html#consistency-modes), and
+[consistency modes](/api/index.html#consistency-modes),
+[agent caching](/api/index.html#agent-caching), and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | Consistency Modes | ACL Required |
-| ---------------- | ----------------- | ------------ |
-| `NO`             | `none`            | `query:read` |
+| Blocking Queries | Consistency Modes | Agent Caching | ACL Required |
+| ---------------- | ----------------- | ------------- | ------------ |
+| `NO`             | `none`            | `none`        | `query:read` |
 
 ### Parameters
 
@@ -572,7 +634,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-    https://consul.rocks/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05/explain
+    http://127.0.0.1:8500/v1/query/8f246b77-f3e1-ff88-5b48-8ec93abf3e05/explain
 ```
 
 ### Sample Response
@@ -597,6 +659,7 @@ $ curl \
       },
       "OnlyPassing": true,
       "Tags": ["primary"],
+      "Meta": { "mysql_version": "5.7.20" },
       "NodeMeta": {"instance_type": "m3.large"}
     }
   }

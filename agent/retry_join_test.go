@@ -7,11 +7,13 @@ import (
 	discover "github.com/hashicorp/go-discover"
 )
 
-// if this test fails check the _ imports of go-discover/provider/* packages
-// in retry_join.go
 func TestGoDiscoverRegistration(t *testing.T) {
-	got := discover.ProviderNames()
-	want := []string{"aws", "azure", "gce"}
+	d, err := discover.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := d.Names()
+	want := []string{"aliyun", "aws", "azure", "digitalocean", "gce", "os", "packet", "scaleway", "softlayer", "triton", "vsphere"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got go-discover providers %v want %v", got, want)
 	}

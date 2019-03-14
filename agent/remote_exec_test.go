@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+
 	"time"
 
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/api"
+	"github.com/hashicorp/consul/testrpc"
+	"github.com/hashicorp/consul/testutil/retry"
 	"github.com/hashicorp/go-uuid"
 )
 
@@ -45,7 +48,7 @@ func TestRexecWriter(t *testing.T) {
 		if len(b) != 4 {
 			t.Fatalf("Bad: %v", b)
 		}
-		if time.Now().Sub(start) < writer.BufIdle {
+		if time.Since(start) < writer.BufIdle {
 			t.Fatalf("too early")
 		}
 	case <-time.After(2 * writer.BufIdle):
@@ -65,7 +68,7 @@ func TestRexecWriter(t *testing.T) {
 		if len(b) != 12 {
 			t.Fatalf("Bad: %v", b)
 		}
-		if time.Now().Sub(start) < writer.BufIdle {
+		if time.Since(start) < writer.BufIdle {
 			t.Fatalf("too early")
 		}
 	case <-time.After(2 * writer.BufIdle):
@@ -95,42 +98,49 @@ func TestRexecWriter(t *testing.T) {
 
 func TestRemoteExecGetSpec(t *testing.T) {
 	t.Parallel()
-	testRemoteExecGetSpec(t, nil, "", true)
+	testRemoteExecGetSpec(t, "", "", true, "")
 }
 
 func TestRemoteExecGetSpec_ACLToken(t *testing.T) {
 	t.Parallel()
-	cfg := TestConfig()
-	cfg.ACLDatacenter = "dc1"
-	cfg.ACLMasterToken = "root"
-	cfg.ACLToken = "root"
-	cfg.ACLDefaultPolicy = "deny"
-	testRemoteExecGetSpec(t, cfg, "root", true)
+	dc := "dc1"
+	testRemoteExecGetSpec(t, `
+		acl_datacenter = "`+dc+`"
+		acl_master_token = "root"
+		acl_token = "root"
+		acl_default_policy = "deny"
+	`, "root", true, dc)
 }
 
 func TestRemoteExecGetSpec_ACLAgentToken(t *testing.T) {
 	t.Parallel()
-	cfg := TestConfig()
-	cfg.ACLDatacenter = "dc1"
-	cfg.ACLMasterToken = "root"
-	cfg.ACLAgentToken = "root"
-	cfg.ACLDefaultPolicy = "deny"
-	testRemoteExecGetSpec(t, cfg, "root", true)
+	dc := "dc1"
+	testRemoteExecGetSpec(t, `
+		acl_datacenter = "`+dc+`"
+		acl_master_token = "root"
+		acl_agent_token = "root"
+		acl_default_policy = "deny"
+	`, "root", true, dc)
 }
 
 func TestRemoteExecGetSpec_ACLDeny(t *testing.T) {
 	t.Parallel()
-	cfg := TestConfig()
-	cfg.ACLDatacenter = "dc1"
-	cfg.ACLMasterToken = "root"
-	cfg.ACLDefaultPolicy = "deny"
-	testRemoteExecGetSpec(t, cfg, "root", false)
+	dc := "dc1"
+	testRemoteExecGetSpec(t, `
+		acl_datacenter = "`+dc+`"
+		acl_master_token = "root"
+		acl_default_policy = "deny"
+	`, "root", false, dc)
 }
 
-func testRemoteExecGetSpec(t *testing.T, c *Config, token string, shouldSucceed bool) {
-	a := NewTestAgent(t.Name(), c)
+func testRemoteExecGetSpec(t *testing.T, hcl string, token string, shouldSucceed bool, dc string) {
+	a := NewTestAgent(t, t.Name(), hcl)
 	defer a.Shutdown()
-
+	if dc != "" {
+		testrpc.WaitForLeader(t, a.RPC, dc)
+	} else {
+		testrpc.WaitForTestAgent(t, a.RPC, "dc1")
+	}
 	event := &remoteExecEvent{
 		Prefix:  "_rexec",
 		Session: makeRexecSession(t, a.Agent, token),
@@ -160,42 +170,50 @@ func testRemoteExecGetSpec(t *testing.T, c *Config, token string, shouldSucceed 
 
 func TestRemoteExecWrites(t *testing.T) {
 	t.Parallel()
-	testRemoteExecWrites(t, nil, "", true)
+	testRemoteExecWrites(t, "", "", true, "")
 }
 
 func TestRemoteExecWrites_ACLToken(t *testing.T) {
 	t.Parallel()
-	cfg := TestConfig()
-	cfg.ACLDatacenter = "dc1"
-	cfg.ACLMasterToken = "root"
-	cfg.ACLToken = "root"
-	cfg.ACLDefaultPolicy = "deny"
-	testRemoteExecWrites(t, cfg, "root", true)
+	dc := "dc1"
+	testRemoteExecWrites(t, `
+		acl_datacenter = "`+dc+`"
+		acl_master_token = "root"
+		acl_token = "root"
+		acl_default_policy = "deny"
+	`, "root", true, dc)
 }
 
 func TestRemoteExecWrites_ACLAgentToken(t *testing.T) {
 	t.Parallel()
-	cfg := TestConfig()
-	cfg.ACLDatacenter = "dc1"
-	cfg.ACLMasterToken = "root"
-	cfg.ACLAgentToken = "root"
-	cfg.ACLDefaultPolicy = "deny"
-	testRemoteExecWrites(t, cfg, "root", true)
+	dc := "dc1"
+	testRemoteExecWrites(t, `
+		acl_datacenter = "`+dc+`"
+		acl_master_token = "root"
+		acl_agent_token = "root"
+		acl_default_policy = "deny"
+	`, "root", true, dc)
 }
 
 func TestRemoteExecWrites_ACLDeny(t *testing.T) {
 	t.Parallel()
-	cfg := TestConfig()
-	cfg.ACLDatacenter = "dc1"
-	cfg.ACLMasterToken = "root"
-	cfg.ACLDefaultPolicy = "deny"
-	testRemoteExecWrites(t, cfg, "root", false)
+	dc := "dc1"
+	testRemoteExecWrites(t, `
+		acl_datacenter = "`+dc+`"
+		acl_master_token = "root"
+		acl_default_policy = "deny"
+	`, "root", false, dc)
 }
 
-func testRemoteExecWrites(t *testing.T, c *Config, token string, shouldSucceed bool) {
-	a := NewTestAgent(t.Name(), c)
+func testRemoteExecWrites(t *testing.T, hcl string, token string, shouldSucceed bool, dc string) {
+	a := NewTestAgent(t, t.Name(), hcl)
 	defer a.Shutdown()
-
+	if dc != "" {
+		testrpc.WaitForLeader(t, a.RPC, dc)
+	} else {
+		// For slow machines, ensure we wait a bit
+		testrpc.WaitForLeader(t, a.RPC, "dc1")
+	}
 	event := &remoteExecEvent{
 		Prefix:  "_rexec",
 		Session: makeRexecSession(t, a.Agent, token),
@@ -250,59 +268,61 @@ func testRemoteExecWrites(t *testing.T, c *Config, token string, shouldSucceed b
 }
 
 func testHandleRemoteExec(t *testing.T, command string, expectedSubstring string, expectedReturnCode string) {
-	a := NewTestAgent(t.Name(), nil)
+	a := NewTestAgent(t, t.Name(), "")
 	defer a.Shutdown()
+	testrpc.WaitForTestAgent(t, a.RPC, "dc1")
+	retry.Run(t, func(r *retry.R) {
+		event := &remoteExecEvent{
+			Prefix:  "_rexec",
+			Session: makeRexecSession(t, a.Agent, ""),
+		}
+		defer destroySession(t, a.Agent, event.Session, "")
 
-	event := &remoteExecEvent{
-		Prefix:  "_rexec",
-		Session: makeRexecSession(t, a.Agent, ""),
-	}
-	defer destroySession(t, a.Agent, event.Session, "")
+		spec := &remoteExecSpec{
+			Command: command,
+			Wait:    time.Second,
+		}
+		buf, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		key := "_rexec/" + event.Session + "/job"
+		setKV(t, a.Agent, key, buf, "")
 
-	spec := &remoteExecSpec{
-		Command: command,
-		Wait:    time.Second,
-	}
-	buf, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	key := "_rexec/" + event.Session + "/job"
-	setKV(t, a.Agent, key, buf, "")
+		buf, err = json.Marshal(event)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		msg := &UserEvent{
+			ID:      generateUUID(),
+			Payload: buf,
+		}
 
-	buf, err = json.Marshal(event)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	msg := &UserEvent{
-		ID:      generateUUID(),
-		Payload: buf,
-	}
+		// Handle the event...
+		a.handleRemoteExec(msg)
 
-	// Handle the event...
-	a.handleRemoteExec(msg)
+		// Verify we have an ack
+		key = "_rexec/" + event.Session + "/" + a.Config.NodeName + "/ack"
+		d := getKV(t, a.Agent, key, "")
+		if d == nil || d.Session != event.Session {
+			t.Fatalf("bad ack: %#v", d)
+		}
 
-	// Verify we have an ack
-	key = "_rexec/" + event.Session + "/" + a.Config.NodeName + "/ack"
-	d := getKV(t, a.Agent, key, "")
-	if d == nil || d.Session != event.Session {
-		t.Fatalf("bad ack: %#v", d)
-	}
+		// Verify we have output
+		key = "_rexec/" + event.Session + "/" + a.Config.NodeName + "/out/00000"
+		d = getKV(t, a.Agent, key, "")
+		if d == nil || d.Session != event.Session ||
+			!bytes.Contains(d.Value, []byte(expectedSubstring)) {
+			t.Fatalf("bad output: %#v", d)
+		}
 
-	// Verify we have output
-	key = "_rexec/" + event.Session + "/" + a.Config.NodeName + "/out/00000"
-	d = getKV(t, a.Agent, key, "")
-	if d == nil || d.Session != event.Session ||
-		!bytes.Contains(d.Value, []byte(expectedSubstring)) {
-		t.Fatalf("bad output: %#v", d)
-	}
-
-	// Verify we have an exit code
-	key = "_rexec/" + event.Session + "/" + a.Config.NodeName + "/exit"
-	d = getKV(t, a.Agent, key, "")
-	if d == nil || d.Session != event.Session || string(d.Value) != expectedReturnCode {
-		t.Fatalf("bad output: %#v", d)
-	}
+		// Verify we have an exit code
+		key = "_rexec/" + event.Session + "/" + a.Config.NodeName + "/exit"
+		d = getKV(t, a.Agent, key, "")
+		if d == nil || d.Session != event.Session || string(d.Value) != expectedReturnCode {
+			t.Fatalf("bad output: %#v", d)
+		}
+	})
 }
 
 func TestHandleRemoteExec(t *testing.T) {

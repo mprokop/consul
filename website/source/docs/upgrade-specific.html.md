@@ -14,6 +14,317 @@ details provided for their upgrades as a result of new features or changed
 behavior. This page is used to document those details separately from the
 standard upgrade flow.
 
+## Consul 1.4.0
+
+There are two major features in Consul 1.4.0 that may impact upgrades: a [new ACL system](#acl-upgrade) and [multi-datacenter support for Connect](#connect-multi-datacenter) in the Enterprise version.
+
+### ACL Upgrade
+
+Consul 1.4.0 includes a [new ACL system](/docs/guides/acl.html) that is
+designed to have a smooth upgrade path but requires care to upgrade components
+in the right order.
+
+**Note:** As with most major version upgrades, you cannot downgrade once the
+upgrade to 1.4.0 is complete as it adds new state to the raft store. As always
+it is _strongly_ recommended that you test the upgrade first outside of
+production and ensure you take backup snapshots of all datacenters before
+upgrading.
+
+#### Primary Datacenter
+
+The "ACL datacenter" in 1.3.x and earlier is now referred to as the "Primary
+datacenter". All configuration is backwards compatible and shouldn't need to
+change prior to upgrade although it's strongly recommended to migrate ACL
+configuration to the new syntax soon after upgrade. This includes moving to
+`primary_datacenter` rather than `acl_datacenter` and `acl_*` to the new [ACL
+block](/docs/agent/options.html#acl).
+
+Datacenters can be upgraded in any order although secondaries will remain in
+[Legacy ACL mode](#legacy-acl-mode) until the primary datacenter is fully
+ugraded.
+
+Each datacenter should follow the [standard rolling upgrade
+procedure](/docs/upgrading.html#standard-upgrades).
+
+#### Legacy ACL Mode
+
+When a 1.4.0 server first starts, it runs in "Legacy ACL mode". In this mode,
+bootstrap requests and new ACL APIs will not be functional yet and will return
+an error. The server advertises it's ability to support 1.4.0 ACLs via gossip
+and waits.
+
+In the primary datacenter, the servers all wait in legacy ACL mode until they
+see every server in the primary datacenter advertise 1.4.0 ACL support. Once
+this happens, the leader will complete the transition out of "legacy ACL mode"
+and write this into the state so future restarts don't need to go through the
+same transition.
+
+In a secondary datacenter, the same process happens except that servers
+_additionally_ wait for all servers in the primary datacenter making it safe to
+upgrade datacenters in any order.
+
+It should be noted that even if you are not upgrading, starting a brand new
+1.4.0 cluster will transition through legacy ACL mode so you may be unable to
+bootstrap ACLs until all the expected servers are up and healthy.
+
+#### Legacy Token Accessor Migration
+
+As soon as all servers in the primary datacenter have been upgraded to 1.4.0,
+the leader will begin the process of creating new accessor IDs for all existing
+ACL tokens.
+
+This process completes in the background and is rate limited to ensure it
+doesn't overload the leader. It completes upgrades in batches of 128 tokens and
+will not upgrade more than one batch per second so on a cluster with 10,000
+tokens, this may take several minutes.
+
+While this is happening both old and new ACLs will work correctly with the
+caveat that new ACL [Token APIs](/api/acl/tokens.html) may not return an
+accessor ID for legacy tokens that are not yet migrated.
+
+#### Migrating Existing ACLs
+
+New ACL policies have slightly different syntax designed to fix some
+shortcomings in old ACL syntax. During and after the upgrade process, any old
+ACL tokens will continue to work and grant exactly the same level of access.
+
+After upgrade, it is still possible to create "legacy" tokens using the existing
+API so existing integrations that create tokens (e.g. Vault) will continue to
+work. The "legacy" tokens generated though will not be able to take advantage of
+new policy features. It's recommended that you complete migration of all tokens
+as soon as possible after upgrade, as well as updating any integrations to work
+with the the new ACL [Token](/api/acl/tokens.html) and
+[Policy](/api/acl/policies.html) APIs.
+
+More complete details on how to upgrade "legacy" tokens is available [here](/docs/guides/acl-migrate-tokens.html).
+
+### Connect Multi-datacenter
+
+This only applies to users upgrading from an older version of Consul Enterprise to Consul Enterprise 1.4.0 (all license types).
+
+In addition, this upgrade will only affect clusters where [Connect is enabled](/docs/connect/configuration.html) on your servers before the migration.
+
+Connect multi-datacenter uses the same primary/secondary approach as ACLs and will use the same [primary_datacenter](#primary-datacenter). When a secondary datacenter server restarts with 1.4.0 it will detect it is not the primary and begin an automatic bootstrap of multi-datacenter CA federation.
+
+Datacenters can be upgraded in either order; secondary datacenters will not switch into multi-datacenter mode until all servers in both the secondary and primary datacenter are detected to be running at least Consul 1.4.0. Secondary datacenters monitor this periodically (every few minutes) and will automatically upgrade Connect to use a federated Certificate Authority when they do.
+
+In general, migrating a Consul cluster from OSS to Enterprise will update the CA to be federated automatically and without impact on Connect traffic. When upgrading Consul Enterprise 1.3.x to Consul Enterprise 1.4.0 upgrades the CA upgrade is seamless, however depending on the size of the cluster, _new_ connection attempts in the secondary datacenter might fail for a short window (typically seconds) while the update is propagated due to the 1.3.x Beta authorization endpoint validating originating cluster in a way that was not fully forwards compatible with migrating between cluster trust domains. That issue is fixed in 1.4.0 as part of General Availability.
+
+Once migrated (typically a few seconds). Connect will use the primary datacenter's Certificate Authority as the root of trust for all other datacenters. CA migration or root key changes in the primary will now rotate automatically and without loss of connectivity throughout all datacenters and workloads.
+
+For more information see [Connect Multi-datacenter](/docs/enterprise/connect-multi-datacenter/index.html).
+
+## Consul 1.3.0
+
+This version added support for multiple tag filters in service discovery queries, however it introduced a subtle bug where API calls to `/catalog/service/:name?tag=<tag>` would ignore the tag filter _only during the upgrade_. It only occurs when clients are still running 1.2.3 or earlier but servers have been upgraded. The `/health/service/:name?tag=<tag>` endpoint and DNS interface were _not_ affected.
+
+For this reason, we recommend you upgrade directly to 1.3.1 which includes only a fix for this issue.
+
+## Consul 1.1.0
+
+#### Removal of Deprecated Features
+
+The following previously deprecated fields and config options have been removed:
+
+ - `CheckID` has been removed from config file check definitions (use `id` instead).
+ - `script` has been removed from config file check definitions (use `args` instead).
+ - `enableTagOverride` is no longer valid in service definitions (use `enable_tag_override` instead).
+ - The [deprecated set of metric names](/docs/upgrade-specific.html#metric-names-updated) (beginning with `consul.consul.`) has been removed
+ along with the `enable_deprecated_names` option from the metrics configuration.
+
+#### New defaults for Raft Snapshot Creation
+Consul 1.0.1 (and earlier versions of Consul) checked for raft snapshots every
+5 seconds, and created new snapshots for every 8192 writes. These defaults cause
+constant disk IO in large busy clusters. Consul 1.1.0 increases these to larger values,
+and makes them tunable via the [raft_snapshot_interval](/docs/agent/options.html#_raft_snapshot_interval) and
+[raft_snapshot_threshold](/docs/agent/options.html#_raft_snapshot_threshold) parameters. We recommend
+keeping the new defaults. However, operators can go back to the old defaults by changing their
+config if they prefer more frequent snapshots. See the documentation for [raft_snapshot_interval](/docs/agent/options.html#_raft_snapshot_interval)
+and [raft_snapshot_threshold](/docs/agent/options.html#_raft_snapshot_threshold) to understand the trade-offs
+when tuning these.
+
+## Consul 1.0.7
+
+When requesting a specific service (`/v1/health/:service` or
+`/v1/catalog/:service` endpoints), the `X-Consul-Index` returned is now the
+index at which that _specific service_ was last modified. In version 1.0.6 and
+earlier the `X-Consul-Index` returned was the index at which _any_ service was
+last modified. See [GH-3890](https://github.com/hashicorp/consul/issues/3890)
+for more details.
+
+During upgrades from 1.0.6 or lower to 1.0.7 or higher, watchers are likely to
+see `X-Consul-Index` for these endpoints decrease between blocking calls.
+
+Consul’s watch feature and `consul-template` should gracefully handle this case.
+Other tools relying on blocking service or health queries are also likely to
+work; some may require a restart. It is possible external tools could break and
+either stop working or continually re-request data without blocking if they
+have assumed indexes can never decrease or be reset and/or persist index
+values. Please test any blocking query integrations in a controlled environment
+before proceeding.
+
+## Consul 1.0.1
+
+#### Carefully Check and Remove Stale Servers During Rolling Upgrades
+
+Consul 1.0 (and earlier versions of Consul when running with [Raft protocol 3](/docs/agent/options.html#_raft_protocol) had an issue where performing rolling updates of Consul servers could result in an outage from old servers remaining in the cluster. [Autopilot](/docs/guides/autopilot.html) would normally remove old servers when new ones come online, but it was also waiting to promote servers to voters in pairs to maintain an odd quorum size. The pairwise promotion feature was removed so that servers become voters as soon as they are stable, allowing Autopilot to remove old servers in a safer way.
+
+When upgrading from Consul 1.0, you may need to manually [force-leave](/docs/commands/force-leave.html) old servers as part of a rolling update to Consul 1.0.1.
+
+## Consul 1.0
+
+Consul 1.0 has several important breaking changes that are documented here. Please be sure to read over all the details here before upgrading.
+
+#### Raft Protocol Now Defaults to 3
+
+The [`-raft-protocol`](/docs/agent/options.html#_raft_protocol) default has been changed from 2 to 3, enabling all [Autopilot](/docs/guides/autopilot.html) features by default.
+
+Raft protocol version 3 requires Consul running 0.8.0 or newer on all servers in order to work, so if you are upgrading with older servers in a cluster then you will need to set this back to 2 in order to upgrade. See [Raft Protocol Version Compatibility](/docs/upgrade-specific.html#raft-protocol-version-compatibility) for more details. Also the format of `peers.json` used for outage recovery is different when running with the latest Raft protocol. See [Manual Recovery Using peers.json](/docs/guides/outage.html#manual-recovery-using-peers-json) for a description of the required format.
+
+Please note that the Raft protocol is different from Consul's internal protocol as described on the [Protocol Compatibility Promise](/docs/compatibility.html) page, and as is shown in commands like `consul members` and `consul version`. To see the version of the Raft protocol in use on each server, use the `consul operator raft list-peers` command.
+
+The easiest way to upgrade servers is to have each server leave the cluster, upgrade its Consul version, and then add it back. Make sure the new server joins successfully and that the cluster is stable before rolling the upgrade forward to the next server. It's also possible to stand up a new set of servers, and then slowly stand down each of the older servers in a similar fashion.
+
+When using Raft protocol version 3, servers are identified by their [`-node-id`](/docs/agent/options.html#_node_id) instead of their IP address when Consul makes changes to its internal Raft quorum configuration. This means that once a cluster has been upgraded with servers all running Raft protocol version 3, it will no longer allow servers running any older Raft protocol versions to be added. If running a single Consul server, restarting it in-place will result in that server not being able to elect itself as a leader. To avoid this, either set the Raft protocol back to 2, or use [Manual Recovery Using peers.json](/docs/guides/outage.html#manual-recovery-using-peers-json) to map the server to its node ID in the Raft quorum configuration.
+
+#### Config Files Require an Extension
+
+As part of supporting the [HCL](https://github.com/hashicorp/hcl#syntax) format for Consul's config files, an `.hcl` or `.json` extension is required for all config files loaded by Consul, even when using the [`-config-file`](/docs/agent/options.html#_config_file) argument to specify a file directly.
+
+#### Deprecated Options Have Been Removed
+
+All of Consul's previously deprecated command line flags and config options have been removed, so these will need to be mapped to their equivalents before upgrading. Here's the complete list of removed options and their equivalents:
+
+| Removed Option | Equivalent |
+| -------------- | ---------- |
+| `-dc` | [`-datacenter`](/docs/agent/options.html#_datacenter) |
+| `-retry-join-azure-tag-name` | [`-retry-join`](/docs/agent/options.html#microsoft-azure) |
+| `-retry-join-azure-tag-value` | [`-retry-join`](/docs/agent/options.html#microsoft-azure) |
+| `-retry-join-ec2-region` | [`-retry-join`](/docs/agent/options.html#amazon-ec2) |
+| `-retry-join-ec2-tag-key` | [`-retry-join`](/docs/agent/options.html#amazon-ec2) |
+| `-retry-join-ec2-tag-value` | [`-retry-join`](/docs/agent/options.html#amazon-ec2) |
+| `-retry-join-gce-credentials-file` | [`-retry-join`](/docs/agent/options.html#google-compute-engine) |
+| `-retry-join-gce-project-name` | [`-retry-join`](/docs/agent/options.html#google-compute-engine) |
+| `-retry-join-gce-tag-name` | [`-retry-join`](/docs/agent/options.html#google-compute-engine) |
+| `-retry-join-gce-zone-pattern` | [`-retry-join`](/docs/agent/options.html#google-compute-engine) |
+| `addresses.rpc` | None, the RPC server for CLI commands is no longer supported. |
+| `advertise_addrs` | [`ports`](/docs/agent/options.html#ports) with [`advertise_addr`](https://www.consul.io/docs/agent/options.html#advertise_addr) and/or [`advertise_addr_wan`](/docs/agent/options.html#advertise_addr_wan) |
+| `dogstatsd_addr` | [`telemetry.dogstatsd_addr`](/docs/agent/options.html#telemetry-dogstatsd_addr) |
+| `dogstatsd_tags` | [`telemetry.dogstatsd_tags`](/docs/agent/options.html#telemetry-dogstatsd_tags) |
+| `http_api_response_headers` | [`http_config.response_headers`](/docs/agent/options.html#response_headers) |
+| `ports.rpc` | None, the RPC server for CLI commands is no longer supported. |
+| `recursor` | [`recursors`](https://github.com/hashicorp/consul/blob/master/website/source/docs/agent/options.html.md#recursors) |
+| `retry_join_azure` | [`-retry-join`](/docs/agent/options.html#microsoft-azure) |
+| `retry_join_ec2` | [`-retry-join`](/docs/agent/options.html#amazon-ec2) |
+| `retry_join_gce` | [`-retry-join`](/docs/agent/options.html#google-compute-engine) |
+| `statsd_addr` | [`telemetry.statsd_address`](https://github.com/hashicorp/consul/blob/master/website/source/docs/agent/options.html.md#telemetry-statsd_address) |
+| `statsite_addr` | [`telemetry.statsite_address`](https://github.com/hashicorp/consul/blob/master/website/source/docs/agent/options.html.md#telemetry-statsite_address) |
+| `statsite_prefix` | [`telemetry.metrics_prefix`](/docs/agent/options.html#telemetry-metrics_prefix) |
+| `telemetry.statsite_prefix` | [`telemetry.metrics_prefix`](/docs/agent/options.html#telemetry-metrics_prefix) |
+| (service definitions) `serviceid` | [`service_id`](/docs/agent/services.html) |
+| (service definitions) `dockercontainerid` | [`docker_container_id`](/docs/agent/services.html) |
+| (service definitions) `tlsskipverify` | [`tls_skip_verify`](/docs/agent/services.html) |
+| (service definitions) `deregistercriticalserviceafter` | [`deregister_critical_service_after`](/docs/agent/services.html) |
+
+#### `statsite_prefix` Renamed to `metrics_prefix`
+
+Since the `statsite_prefix` configuration option applied to all telemetry providers, `statsite_prefix` was renamed to [`metrics_prefix`](/docs/agent/options.html#telemetry-metrics_prefix). Configuration files will need to be updated when upgrading to this version of Consul.
+
+#### `advertise_addrs` Removed
+
+This configuration option was removed since it was redundant with `advertise_addr` and `advertise_addr_wan` in combination with `ports` and also wrongly stated that you could configure both host and port.
+
+#### Escaping Behavior Changed for go-discover Configs
+
+The format for [`-retry-join`](/docs/agent/options.html#retry-join) and [`-retry-join-wan`](/docs/agent/options.html#retry-join-wan) values that use [go-discover](https://github.com/hashicorp/go-discover) cloud auto joining has changed. Values in `key=val` sequences must no longer be URL encoded and can be provided as literals as long as they do not contain spaces, backslashes `\` or double quotes `"`. If values contain these characters then use double quotes as in `"some key"="some value"`. Special characters within a double quoted string can be escaped with a backslash `\`.
+
+#### HTTP Verbs are Enforced in Many HTTP APIs
+
+Many endpoints in the HTTP API that previously took any HTTP verb now check for specific HTTP verbs and enforce them. This may break clients relying on the old behavior. Here's the complete list of updated endpoints and required HTTP verbs:
+
+| Endpoint | Required HTTP Verb |
+| -------- | ------------------ |
+| /v1/acl/info | GET |
+| /v1/acl/list | GET |
+| /v1/acl/replication | GET |
+| /v1/agent/check/deregister | PUT |
+| /v1/agent/check/fail | PUT |
+| /v1/agent/check/pass | PUT |
+| /v1/agent/check/register | PUT |
+| /v1/agent/check/warn | PUT |
+| /v1/agent/checks | GET |
+| /v1/agent/force-leave | PUT |
+| /v1/agent/join | PUT |
+| /v1/agent/members | GET |
+| /v1/agent/metrics | GET |
+| /v1/agent/self | GET |
+| /v1/agent/service/register | PUT |
+| /v1/agent/service/deregister | PUT |
+| /v1/agent/services | GET |
+| /v1/catalog/datacenters | GET |
+| /v1/catalog/deregister | PUT |
+| /v1/catalog/node | GET |
+| /v1/catalog/nodes | GET |
+| /v1/catalog/register | PUT |
+| /v1/catalog/service | GET |
+| /v1/catalog/services | GET |
+| /v1/coordinate/datacenters | GET |
+| /v1/coordinate/nodes | GET |
+| /v1/health/checks | GET |
+| /v1/health/node | GET |
+| /v1/health/service | GET |
+| /v1/health/state | GET |
+| /v1/internal/ui/node | GET |
+| /v1/internal/ui/nodes | GET |
+| /v1/internal/ui/services | GET |
+| /v1/session/info | GET |
+| /v1/session/list | GET |
+| /v1/session/node | GET |
+| /v1/status/leader | GET |
+| /v1/status/peers | GET |
+| /v1/operator/area/:uuid/members | GET |
+| /v1/operator/area/:uuid/join | PUT |
+
+#### Unauthorized KV Requests Return 403
+
+When ACLs are enabled, reading a key with an unauthorized token returns a 403. This previously returned a 404 response.
+
+#### Config Section of Agent Self Endpoint has Changed
+
+The /v1/agent/self endpoint's `Config` section has often been in flux as it was directly returning one of Consul's internal data structures. This configuration structure has been moved under `DebugConfig`, and is documents as for debugging use and subject to change, and a small set of elements of `Config` have been maintained and documented. See [Read Configuration](/api/agent.html#read-configuration) endpoint documentation for details.
+
+#### Deprecated `configtest` Command Removed
+
+The `configtest` command was deprecated and has been superseded by the `validate` command.
+
+#### Undocumented Flags in `validate` Command Removed
+
+The `validate` command supported the `-config-file` and `-config-dir` command line flags but did not document them. This support has been removed since the flags are not required.
+
+#### Metric Names Updated
+
+Metric names no longer start with `consul.consul`. To help with transitioning dashboards and other metric consumers, the field `enable_deprecated_names` has been added to the telemetry section of the config, which will enable metrics with the old naming scheme to be sent alongside the new ones. The following prefixes were affected:
+
+| Prefix |
+| ------ |
+| consul.consul.acl |
+| consul.consul.autopilot |
+| consul.consul.catalog |
+| consul.consul.fsm |
+| consul.consul.health |
+| consul.consul.http |
+| consul.consul.kvs |
+| consul.consul.leader |
+| consul.consul.prepared-query |
+| consul.consul.rpc |
+| consul.consul.session |
+| consul.consul.session_ttl |
+| consul.consul.txn |
+
+#### Checks Validated On Agent Startup
+
+Consul agents now validate health check definitions in their configuration and will fail at startup if any checks are invalid. In previous versions of Consul, invalid health checks would get skipped.
+
 ## Consul 0.9.0
 
 #### Script Checks Are Now Opt-In
@@ -128,7 +439,7 @@ configuration:
 Consul also 0.7 introduced support for tuning Raft performance using a new
 [performance configuration block](/docs/agent/options.html#performance). Also,
 the default Raft timing is set to a lower-performance mode suitable for
-[minimal Consul servers](/docs/guides/performance.html#minumum).
+[minimal Consul servers](/docs/guides/performance.html#minimum).
 
 To continue to use the high-performance settings that were the default prior to
 Consul 0.7 (recommended for production servers), add the following configuration
@@ -368,7 +679,7 @@ The details of the change are not important, however to function the leader
 node will replicate a new command to its followers. Consul is designed
 defensively, and when a command that is not recognized is received, the
 server will panic. This is a purposeful design decision to avoid the possibility
-of data loss, inconsistensies, or security issues caused by future incompatibility.
+of data loss, inconsistencies, or security issues caused by future incompatibility.
 
 In practice, this means if a Consul 0.5 node is the leader, all of its
 followers must also be running 0.5. There are a number of ways to do this
@@ -391,4 +702,3 @@ fails for some reason, it is not fatal. The older version of the server
 will simply panic and stop. At that point, you can upgrade to the new version
 and restart the agent. There will be no data loss and the cluster will
 resume operations.
-

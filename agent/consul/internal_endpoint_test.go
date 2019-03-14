@@ -5,7 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/acl"
+	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/testrpc"
@@ -346,6 +347,7 @@ func TestInternal_EventFire_Token(t *testing.T) {
 	t.Parallel()
 	dir, srv := testServerWithConfig(t, func(c *Config) {
 		c.ACLDatacenter = "dc1"
+		c.ACLsEnabled = true
 		c.ACLMasterToken = "root"
 		c.ACLDownPolicy = "deny"
 		c.ACLDefaultPolicy = "deny"
@@ -365,7 +367,7 @@ func TestInternal_EventFire_Token(t *testing.T) {
 		Payload:    []byte("nope"),
 	}
 	err := msgpackrpc.CallWithCodec(codec, "Internal.EventFire", &event, nil)
-	if err == nil || err.Error() != permissionDenied {
+	if !acl.IsErrPermissionDenied(err) {
 		t.Fatalf("bad: %s", err)
 	}
 

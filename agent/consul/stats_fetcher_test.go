@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/consul/agent/consul/agent"
+	"github.com/hashicorp/consul/agent/metadata"
 	"github.com/hashicorp/consul/testrpc"
 	"github.com/hashicorp/consul/types"
 )
@@ -27,16 +27,18 @@ func TestStatsFetcher(t *testing.T) {
 
 	joinLAN(t, s2, s1)
 	joinLAN(t, s3, s1)
-	testrpc.WaitForLeader(t, s1.RPC, "dc1")
+	testrpc.WaitForTestAgent(t, s1.RPC, "dc1")
+	testrpc.WaitForTestAgent(t, s2.RPC, "dc1")
+	testrpc.WaitForTestAgent(t, s3.RPC, "dc1")
 
 	members := s1.serfLAN.Members()
 	if len(members) != 3 {
 		t.Fatalf("bad len: %d", len(members))
 	}
 
-	var servers []*agent.Server
+	var servers []*metadata.Server
 	for _, member := range members {
-		ok, server := agent.IsConsulServer(member)
+		ok, server := metadata.IsConsulServer(member)
 		if !ok {
 			t.Fatalf("bad: %#v", member)
 		}
@@ -47,7 +49,7 @@ func TestStatsFetcher(t *testing.T) {
 	func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		stats := s1.statsFetcher.Fetch(ctx, servers)
+		stats := s1.statsFetcher.Fetch(ctx, s1.LANMembers())
 		if len(stats) != 3 {
 			t.Fatalf("bad: %#v", stats)
 		}
@@ -73,7 +75,7 @@ func TestStatsFetcher(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		stats := s1.statsFetcher.Fetch(ctx, servers)
+		stats := s1.statsFetcher.Fetch(ctx, s1.LANMembers())
 		if len(stats) != 2 {
 			t.Fatalf("bad: %#v", stats)
 		}
@@ -92,12 +94,4 @@ func TestStatsFetcher(t *testing.T) {
 			}
 		}
 	}()
-
-	// Do a fetch with a canceled context and make sure we bail right away.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	cancel()
-	stats := s1.statsFetcher.Fetch(ctx, servers)
-	if len(stats) != 0 {
-		t.Fatalf("bad: %#v", stats)
-	}
 }

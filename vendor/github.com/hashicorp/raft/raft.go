@@ -88,8 +88,12 @@ type leaderState struct {
 // setLeader is used to modify the current leader of the cluster
 func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Lock()
+	oldLeader := r.leader
 	r.leader = leader
 	r.leaderLock.Unlock()
+	if oldLeader != leader {
+		r.observe(LeaderObservation{leader: leader})
+	}
 }
 
 // requestConfigChange is a helper for the above functions that make
@@ -440,6 +444,7 @@ func (r *Raft) startStopReplication() {
 				currentTerm: r.getCurrentTerm(),
 				nextIndex:   lastIdx + 1,
 				lastContact: time.Now(),
+				notify:      make(map[*verifyFuture]struct{}),
 				notifyCh:    make(chan struct{}, 1),
 				stepDown:    r.leaderState.stepDown,
 			}
@@ -551,11 +556,17 @@ func (r *Raft) leaderLoop() {
 				r.logger.Printf("[WARN] raft: New leader elected, stepping down")
 				r.setState(Follower)
 				delete(r.leaderState.notify, v)
+				for _, repl := range r.leaderState.replState {
+					repl.cleanNotify(v)
+				}
 				v.respond(ErrNotLeader)
 
 			} else {
 				// Quorum of members agree, we are still leader
 				delete(r.leaderState.notify, v)
+				for _, repl := range r.leaderState.replState {
+					repl.cleanNotify(v)
+				}
 				v.respond(nil)
 			}
 
@@ -635,7 +646,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 	// Trigger immediate heartbeats
 	for _, repl := range r.leaderState.replState {
 		repl.notifyLock.Lock()
-		repl.notify = append(repl.notify, v)
+		repl.notify[v] = struct{}{}
 		repl.notifyLock.Unlock()
 		asyncNotifyCh(repl.notifyCh)
 	}
@@ -1379,7 +1390,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	req := &RequestVoteRequest{
 		RPCHeader:    r.getRPCHeader(),
 		Term:         r.getCurrentTerm(),
-		Candidate:    r.trans.EncodePeer(r.localAddr),
+		Candidate:    r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex: lastIdx,
 		LastLogTerm:  lastTerm,
 	}
@@ -1389,7 +1400,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		r.goFunc(func() {
 			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 			resp := &voteResult{voterID: peer.ID}
-			err := r.trans.RequestVote(peer.Address, req, &resp.RequestVoteResponse)
+			err := r.trans.RequestVote(peer.ID, peer.Address, req, &resp.RequestVoteResponse)
 			if err != nil {
 				r.logger.Printf("[ERR] raft: Failed to make RequestVote RPC to %v: %v", peer, err)
 				resp.Term = req.Term
